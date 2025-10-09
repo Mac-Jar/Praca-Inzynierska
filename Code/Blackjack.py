@@ -92,6 +92,8 @@ class Blackjack:
     def start_game(self):
         self.initialize()
         self.play_games()
+    def player_hits(self):
+        self.player_cards.append(self.deck.pop())
     def play_games(self,number_of_games=10):
         i=0
         while True:
