@@ -23,6 +23,20 @@ class Blackjack:
         self.player_points = 0
         self.dealer_points = 0
         self.play_manually = play_manually
+
+    def make_deck(self):
+        self.deck = []
+        suits = ["Hearts", "Diamonds", "Clubs", "Spades"]
+        for i in range(2, 9):
+            for j in range(4):
+                self.deck.append(Card(suits[j], i))
+        for j in range(4):
+            self.deck.append(Card(suits[j], "Ace"))
+            self.deck.append(Card(suits[j], "King"))
+            self.deck.append(Card(suits[j], "Queen"))
+            self.deck.append(Card(suits[j], "Jack"))
+        self.shuffle_deck()
+
     def initialize(self):
         self.deck=[]
         suits=["Hearts","Diamonds","Clubs","Spades"]
@@ -156,4 +170,3 @@ class Blackjack:
 if __name__ == "__main__":
     game = Blackjack(play_manually=True)
     game.start_game()
-
