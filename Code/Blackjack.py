@@ -27,9 +27,9 @@ class Blackjack:
     def make_deck(self):
         self.deck = []
         suits = ["Hearts", "Diamonds", "Clubs", "Spades"]
-        for i in range(2, 9):
-            for j in range(4):
-                self.deck.append(Card(suits[j], i))
+        for i in range(2, 11):
+            for suit in suits:
+                self.deck.append(Card(suit, i))
         for j in range(4):
             self.deck.append(Card(suits[j], "Ace"))
             self.deck.append(Card(suits[j], "King"))
@@ -139,24 +139,28 @@ class Blackjack:
             total_points += card.blackjack_card_value()
             if card.value == "Ace":
                 number_of_aces += 1
-        if total_points > 21 and number_of_aces > 1:
+        while total_points > 21 and number_of_aces >= 1:
             total_points -= 10
             number_of_aces -= 1
         return total_points
-    def check_game_result(self):
+    def check_game_result(self,):
+
         self.player_points = self.evaluate_hand(self.player_cards)
         if self.player_points>21:
             return -1
         self.dealer_points = self.evaluate_hand(self.dealer_cards)
-        self.print_all_cards()
+        if self.play_manually:
+            self.print_all_cards()
+
         while self.dealer_points<17:
-            print("Dealer must hit")
             if self.play_manually:
+                print("Dealer must hit")
                 x=input()
             self.dealer_cards.append(self.deck.pop())
             #self.used_cards.append(self.dealers_cards[-1])
             self.dealer_points = self.evaluate_hand(self.dealer_cards)
-            self.print_all_cards()
+            if self.play_manually:
+                self.print_all_cards()
 
 
         if self.dealer_points>21:
