@@ -38,17 +38,18 @@ class Blackjack:
         self.shuffle_deck()
 
     def initialize(self):
-        self.deck=[]
-        suits=["Hearts","Diamonds","Clubs","Spades"]
-        for i in range(2,9):
-            for j in range(4):
-                self.deck.append(Card(suits[j],i))
-        for j in range(4):
-            self.deck.append(Card(suits[j], "Ace"))
-            self.deck.append(Card(suits[j], "King"))
-            self.deck.append(Card(suits[j], "Queen"))
-            self.deck.append(Card(suits[j], "Jack"))
-        self.shuffle_deck()
+        # self.deck=[]
+        # suits=["Hearts","Diamonds","Clubs","Spades"]
+        # for i in range(2,9):
+        #     for j in range(4):
+        #         self.deck.append(Card(suits[j],i))
+        # for j in range(4):
+        #     self.deck.append(Card(suits[j], "Ace"))
+        #     self.deck.append(Card(suits[j], "King"))
+        #     self.deck.append(Card(suits[j], "Queen"))
+        #     self.deck.append(Card(suits[j], "Jack"))
+        # self.shuffle_deck()
+        self.make_deck()
     def deal_cards(self,shuffle=False):
         self.deck.extend(self.player_cards)
         self.deck.extend(self.dealer_cards)
