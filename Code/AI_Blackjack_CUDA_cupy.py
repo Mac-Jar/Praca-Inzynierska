@@ -5,7 +5,7 @@ import cupy as cp
 from Blackjack import Blackjack
 
 
-class AI_Blackjack_CUDA:
+class AI_Blackjack_CUDA_cupy:
     """
     Równoległa symulacja epizodów z użyciem klasy Blackjack (CPU),
     a aktualizacje Q/n/suma_nagród wykonywane na GPU (CuPy).
