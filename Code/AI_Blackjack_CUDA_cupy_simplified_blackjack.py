@@ -84,7 +84,6 @@ class AI_Blackjack_CuPy:
         traj_usable = [[] for _ in range(batch_size)]
         traj_action = [[] for _ in range(batch_size)]
 
-        # Karty gracza (losujemy krok po kroku)
         for step in range(max_steps):
             active_idx = np.flatnonzero(~done)
             if active_idx.size == 0:

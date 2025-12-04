@@ -3,7 +3,7 @@ from AI_Blackjack_CUDA_cupy import AI_Blackjack_CUDA_cupy
 import time
 
 if __name__ == "__main__":
-    episodes = 1000000
+    episodes = 10000000
 
 
     ai = AI_Blackjack()

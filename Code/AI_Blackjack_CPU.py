@@ -120,7 +120,7 @@ class AI_Blackjack_CPU:
         choices = np.flatnonzero(arr == max_val)
         return int(np.random.choice(choices))
 
-    def choose_action_final(self, state):
+    def get_greedy_action(self, state):
         player_sum, dealer_card, usable_ace = state
         return int(np.argmax(self.Q[player_sum, dealer_card, usable_ace]))
 
@@ -144,3 +144,131 @@ class AI_Blackjack_CPU:
     def evaluate_policy(self, print_n=False):
         print_policy(self.Q, self.n, title="CPU Policy", print_n=print_n)
 
+class AI_Blackjack_CPU_ES:
+    """
+    Monte Carlo Exploring Starts (ES)
+    zgodnie z książką Sutton & Barto.
+    """
+
+    def __init__(self):
+        # Q[player_sum][dealer_card][usable_ace][action]
+        self.Q = np.zeros((32, 11, 2, 2), dtype=np.float64)
+        self.n = np.zeros((32, 11, 2, 2), dtype=np.int64)
+        self.engine = BlackjackEngineCPU()
+
+    # -----------------------------
+    #   Losowy stan startowy ES
+    # -----------------------------
+    def random_state(self):
+        player_sum = random.randint(12, 21)
+        dealer_card = random.randint(1, 10)
+        usable_ace = random.choice([0, 1])
+
+        # Odwzorowanie player_sum na realistyczne karty (na potrzeby symulatora)
+        cards = []
+        rest = player_sum
+
+        # jeśli usable_ace==1, daj asa jako 11
+        if usable_ace == 1:
+            cards.append(11)
+            rest -= 11
+
+        # generujemy karty o wartości 2-10 aż złożą sumę
+        while rest > 0:
+            v = min(rest, random.randint(2, 10))
+            cards.append(v)
+            rest -= v
+
+        dealer_cards = [dealer_card, self.engine.draw_card()]
+
+        return cards, dealer_cards
+
+    # -----------------------------
+    #   Polityka greedy (bez epsilon)
+    # -----------------------------
+    def get_greedy_action(self, state):
+        ps, dc, ua = state
+        return int(np.argmax(self.Q[ps, dc, ua]))
+
+    # -----------------------------
+    #   Pełny epizod ES z wymuszonym startem
+    # -----------------------------
+    def play_episode_exploring_starts(self):
+        # wygeneruj losowy stan startowy
+        player, dealer = self.random_state()
+
+        # losowa pierwsza akcja (exploring start)
+        first_action = random.choice([0, 1])
+
+        visited_states = []
+        actions = []
+
+        # --- Pierwsza wymuszona akcja ---
+        state = self.engine.get_state(player, dealer)
+        visited_states.append(state)
+        actions.append(first_action)
+
+        player, done, busted = self.engine.step_player(player, first_action)
+        if busted:
+            return visited_states, actions, -1.0
+        if done:
+            # player stoi od razu → przechodzi do dealera
+            dealer = self.engine.step_dealer(dealer)
+        else:
+            # --- Pozostałe akcje według polityki greedy ---
+            while True:
+                state = self.engine.get_state(player, dealer)
+                action = self.get_greedy_action(state)
+                visited_states.append(state)
+                actions.append(action)
+
+                player, done, busted = self.engine.step_player(player, action)
+                if busted:
+                    return visited_states, actions, -1.0
+                if done:
+                    break
+
+            dealer = self.engine.step_dealer(dealer)
+
+        # --- Nagroda ---
+        ps = self.engine.evaluate_hand(player)
+        ds = self.engine.evaluate_hand(dealer)
+        if ds > 21:
+            reward = 1.0
+        elif ps > ds:
+            reward = 1.0
+        elif ps == ds:
+            reward = 0.0
+        else:
+            reward = -1.0
+
+        return visited_states, actions, reward
+
+    # -----------------------------
+    #   Aktualizacja MC First Visit
+    # -----------------------------
+    def play_episode_and_update(self):
+        visited_states, actions, reward = self.play_episode_exploring_starts()
+        seen = set()  # First-visit
+
+        for state, action in zip(visited_states, actions):
+            if (state, action) in seen:
+                continue
+            seen.add((state, action))
+
+            ps, dc, ua = state
+            cur_n = self.n[ps, dc, ua, action]
+            self.Q[ps, dc, ua, action] = (self.Q[ps, dc, ua, action]*cur_n + reward) / (cur_n + 1)
+            self.n[ps, dc, ua, action] += 1
+
+        return reward
+
+    def train(self, episodes=200000, report_every=20000):
+        for i in range(episodes):
+            self.play_episode_and_update()
+            if (i+1) % report_every == 0:
+                print(f"[ES] Trained {i+1}/{episodes}")
+
+    def evaluate_policy(self, print_n=False):
+        from utils import print_policy
+        print_policy(self.Q, self.n, title="Exploring Starts Policy", print_n=print_n)
