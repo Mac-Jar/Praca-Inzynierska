@@ -11,7 +11,35 @@ DC_MAX = 11
 UA_MAX = 2
 ACTIONS = 2
 
+
+def map_card_value_host(v):
+    if 11 <= v <= 13:
+        return 10
+    if v == 14:
+        return 11
+    return v
 # device helpers
+@cuda.jit(device=True, inline=True)
+def sum_and_usable_ace(cards_vals, n):
+    total = 0
+    aces = 0
+    for i in range(n):
+        v = cards_vals[i]
+        total += v
+        if v == 11:
+            aces += 1
+    while total > 21 and aces > 0:
+        total -= 10
+        aces -= 1
+    usable = 1 if aces > 0 else 0
+    return total, usable
+
+@cuda.jit
+def zero_array(arr):
+    i = cuda.grid(1)
+    if i < arr.size:
+        arr[i] = 0
+
 @cuda.jit(device=True, inline=True)
 def evaluate_hand_gpu(cards_vals, n):
     total = 0
@@ -79,28 +107,41 @@ def play_episodes_kernel(dev_Q, epsilon, rng_states,
         step = 0
         v_idx = 0
         while True:
-            p_sum = evaluate_hand_gpu(pcards, p_n)
+            # p_sum = evaluate_hand_gpu(pcards, p_n)
+            p_sum, usable = sum_and_usable_ace(pcards, p_n)
             ps_idx = p_sum if p_sum <= 31 else 31
             if p_sum > 21:
                 ps_idx = 22
             dealer_up = dcards[0]
-            if dealer_up > 10:
+            if dealer_up == 11:
+                dealer_up = 1  # indeks 1 oznacza asa
+            elif dealer_up > 10:
                 dealer_up = 10
-            usable = 0
-            if p_sum <= 21:
-                for i in range(p_n):
-                    if pcards[i] == 11:
-                        usable = 1
-                        break
+            # usable = 0
+            # if p_sum <= 21:
+            #     for i in range(p_n):
+            #         if pcards[i] == 11:
+            #             usable = 1
+            #             break
 
             # epsilon-greedy using dev_Q
             r = xoroshiro128p_uniform_float32(rng_states, tid)
-            if r < epsilon:
+
+            if p_sum >= 21:
+                a = 0  # STAND at 21+
+
+            elif r < epsilon:
                 a = 1 if xoroshiro128p_uniform_float32(rng_states, tid) < 0.5 else 0
+
             else:
-                q0 = dev_Q[ps_idx, dealer_up, usable, 0]
-                q1 = dev_Q[ps_idx, dealer_up, usable, 1]
-                a = 0 if q0 >= q1 else 1
+                q0 = dev_Q[ps_idx, dealer_up, usable, 0]  # STAND
+                q1 = dev_Q[ps_idx, dealer_up, usable, 1]  # HIT
+                if q0 > q1:
+                    a = 0
+                elif q1 > q0:
+                    a = 1
+                else:
+                    a = 1 if xoroshiro128p_uniform_float32(rng_states, tid) < 0.5 else 0  # unbiased tie-break
 
             # store
             if step < 20:
@@ -158,6 +199,12 @@ def play_episodes_kernel(dev_Q, epsilon, rng_states,
             cuda.atomic.add(dev_counts, (ps_idx, dc, ua, a), 1)
             base += 3
 
+def compute_launch_config(cur_batch, threads_per_block=256, max_threads=65536):
+    n_threads = min(cur_batch, max_threads)
+    blocks = (n_threads + threads_per_block - 1) // threads_per_block
+    n_threads = blocks * threads_per_block
+    ep_per_thread = max(1, cur_batch // n_threads)
+    return blocks, threads_per_block, ep_per_thread
 # rest of ai_gpu.py (wrapper)
 class AI_Blackjack_GPU:
     def __init__(self, epsilon=0.1, device_threads=256, seed=1234):
@@ -165,8 +212,8 @@ class AI_Blackjack_GPU:
         self.shape = (PS_MAX, DC_MAX, UA_MAX, ACTIONS)
         self.sum_rewards = np.zeros(self.shape, dtype=np.float32)
         self.counts = np.zeros(self.shape, dtype=np.int32)
-        self.Q = np.ones(self.shape, dtype=np.float32)
-        self.Q[:,:,:,1]=2
+        self.Q = np.zeros(self.shape, dtype=np.float32)
+        #self.Q[:,:,:,1]=2
         # device arrays
         self.d_sum_rewards = cuda.to_device(self.sum_rewards)
         self.d_counts = cuda.to_device(self.counts)
@@ -182,59 +229,75 @@ class AI_Blackjack_GPU:
         if self.rng_states is None or self.rng_states.size != n_threads:
             self.rng_states = create_xoroshiro128p_states(n_threads, seed=self.seed)
 
-    def train(self, episodes=200000, batch_size=50000, threads_per_block=256):
+    def train(self, episodes=200_000, target_episodes_per_thread=32):
         """
+        Epsilon-greedy training loop.
         episodes: total episodes to run
-        batch_episodes: how many episodes to simulate per host-device round
+        target_episodes_per_thread: ile epizodów średnio przypada na wątek
         """
+        batch_size = episodes // 100
+        threads_per_block = 256
         remaining = episodes
+
         while remaining > 0:
             cur_batch = min(remaining, batch_size)
-            # compute threads and ep_per_thread
-            # pick n_threads = blocks * threads_per_block
-            n_threads = 1024  # choose baseline threads; can be tuned
-            blocks = max(1, (n_threads + threads_per_block - 1)//threads_per_block)
+
+            # --- Dobór liczby wątków ---
+            n_threads = max(8192, cur_batch // target_episodes_per_thread)
+            blocks = (n_threads + threads_per_block - 1) // threads_per_block
             n_threads = blocks * threads_per_block
             ep_per_thread = max(1, cur_batch // n_threads)
-            # ensure rng
+
+            # --- RNG ---
             self._ensure_rng(n_threads)
 
-            # reset device accumulators
-            cuda.to_device(np.zeros(self.shape, dtype=np.float32), to=self.d_sum_rewards)
-            cuda.to_device(np.zeros(self.shape, dtype=np.int32), to=self.d_counts)
+            # --- reset sum/count na GPU ---
+            threads_zero = 256
+            blocks_zero = max(1024, (self.d_sum_rewards.size + threads_zero - 1) // threads_zero)
+            zero_array[blocks_zero, threads_zero](self.d_sum_rewards)
 
-            # copy current Q to device
-            self.d_Q.copy_to_device(self.Q.astype(np.float32))
-
-            # run kernel
-            play_episodes_kernel[blocks, threads_per_block](self.d_Q, np.float32(self.epsilon),
-                                                            self.rng_states,
-                                                            self.d_sum_rewards,
-                                                            self.d_counts,
-                                                            np.int32(ep_per_thread))
+            blocks_zero = max(1024, (self.d_counts.size + threads_zero - 1) // threads_zero)
+            zero_array[blocks_zero, threads_zero](self.d_counts)
             cuda.synchronize()
 
-            # pull sums and counts
+            # --- kopiowanie Q na GPU ---
+            self.d_Q.copy_to_device(self.Q)
+
+            # --- uruchomienie kernela epsilon-greedy ---
+            play_episodes_kernel[blocks, threads_per_block](
+                self.d_Q,
+                np.float32(self.epsilon),
+                self.rng_states,
+                self.d_sum_rewards,
+                self.d_counts,
+                np.int32(ep_per_thread)
+            )
+            cuda.synchronize()
+
+            # --- pobranie wyników ---
             sum_rewards = self.d_sum_rewards.copy_to_host()
             counts = self.d_counts.copy_to_host()
 
-            # aggregate into host arrays
-            # convert to float64 for stability in averaging
+            # --- agregacja ---
             mask = counts > 0
-            self.sum_rewards[mask] += sum_rewards[mask].astype(np.float64)
+            self.sum_rewards[mask] += sum_rewards[mask]
             self.counts[mask] += counts[mask]
 
-            # recompute Q where counts>0
             mask2 = self.counts > 0
             self.Q[mask2] = (self.sum_rewards[mask2] / self.counts[mask2]).astype(np.float32)
 
             remaining -= cur_batch
-            print(f"[GPU] Completed batch of {cur_batch} episodes. Remaining: {remaining}")
+            print(f"[GPU][ε] Completed batch of {cur_batch} episodes. Remaining: {remaining}")
+
 
     def get_greedy_action(self, state):
         player_sum, dealer_card, usable_ace = state
+        dealer_card = map_card_value_host(dealer_card)
+        if dealer_card == 11:
+            dealer_card = 1
+        elif dealer_card > 10:
+            dealer_card = 10
         return int(np.argmax(self.Q[player_sum, dealer_card, usable_ace]))
-
     def evaluate_policy(self, print_n=False):
         print_policy(self.Q, getattr(self, 'counts', None), title="GPU Policy", print_n=print_n)
 
@@ -299,7 +362,11 @@ def play_episodes_es_kernel(dev_Q,
         # -----------------------------
         # 1. Exploring Start: losowy stan
         # -----------------------------
-        ps = int(xoroshiro128p_uniform_float32(rng_states, tid) * 10) + 12   # 12..21
+        # gdy chcemy jedynie sprawdzać od 12 tp
+        # ps = int(xoroshiro128p_uniform_float32(rng_states, tid) * 10) + 12   # 12..21
+        #gdy chcemy sprawdzać od 4:
+        ps = int(xoroshiro128p_uniform_float32(rng_states, tid) * 18) + 4  # 4..21
+
         dealer_up = int(xoroshiro128p_uniform_float32(rng_states, tid) * 10) + 1  # 1..10
         usable = 1 if xoroshiro128p_uniform_float32(rng_states, tid) < 0.5 else 0
 
@@ -334,6 +401,8 @@ def play_episodes_es_kernel(dev_Q,
         # 2. Pierwsza akcja = losowa (exploring start)
         # -----------------------------
         a = 1 if xoroshiro128p_uniform_float32(rng_states, tid) < 0.5 else 0
+        if ps >= 21:
+            a = 0  # nigdy nie HIT przy 21
 
         step = 0
         v_idx = 0
@@ -351,9 +420,7 @@ def play_episodes_es_kernel(dev_Q,
             pcards[p_n] = map_card_value(v)
             p_n += 1
             if evaluate_hand_gpu(pcards, p_n) > 21:
-                # zas bust po exploring start
                 reward = -1.0
-                # zapisujemy wszystkie odwiedzone stany/akcje
                 base = 0
                 for i in range(step):
                     ps2 = visited_states[base]
@@ -369,27 +436,34 @@ def play_episodes_es_kernel(dev_Q,
         # 3. Reszta gry — greedy( Q )
         # -----------------------------
         while True:
-            p_sum = evaluate_hand_gpu(pcards, p_n)
-            if p_sum > 21:
+            p_sum, usable_idx = sum_and_usable_ace(pcards, p_n)
+
+            # nigdy nie HIT przy 21 lub więcej
+            if p_sum >= 21:
+                ps_idx = p_sum if p_sum <= 31 else 31
+                dealer_idx = map_card_value(dcards[0])
+                if dealer_idx == 11:
+                    dealer_idx = 1
+                elif dealer_idx > 10:
+                    dealer_idx = 10
+                if step < 20:
+                    visited_states[v_idx] = ps_idx
+                    visited_states[v_idx+1] = dealer_idx
+                    visited_states[v_idx+2] = usable_idx
+                    visited_actions[step] = 0  # STAND
+                    v_idx += 3
+                step += 1
                 break
-
-            if p_sum > 21:
-                ps_idx = 22
-            else:
-                ps_idx = p_sum
-
-            dealer_idx = dcards[0]
-            if dealer_idx > 10:
+            # if p_sum < 12:
+            #     a = 1
+            # else:
+            ps_idx = p_sum
+            dealer_idx = map_card_value(dcards[0])
+            if dealer_idx == 11:
+                dealer_idx = 1
+            elif dealer_idx > 10:
                 dealer_idx = 10
 
-            usable_idx = 0
-            if p_sum <= 21:
-                for i in range(p_n):
-                    if pcards[i] == 11:
-                        usable_idx = 1
-                        break
-
-            # greedy
             q0 = dev_Q[ps_idx, dealer_idx, usable_idx, 0]
             q1 = dev_Q[ps_idx, dealer_idx, usable_idx, 1]
             a = 0 if q0 >= q1 else 1
@@ -406,8 +480,6 @@ def play_episodes_es_kernel(dev_Q,
                 v = draw_card(rng_states, tid)
                 pcards[p_n] = map_card_value(v)
                 p_n += 1
-                if evaluate_hand_gpu(pcards, p_n) > 21:
-                    break
             else:
                 break
 
@@ -449,7 +521,6 @@ def play_episodes_es_kernel(dev_Q,
             cuda.atomic.add(dev_counts, (ps2, dc2, ua2, aa), 1)
             base += 3
 
-
 # rest of ai_gpu.py (wrapper)
 class AI_Blackjack_GPU_ES:
     def __init__(self, epsilon=0.1, device_threads=256, seed=1234):
@@ -457,8 +528,8 @@ class AI_Blackjack_GPU_ES:
         self.shape = (PS_MAX, DC_MAX, UA_MAX, ACTIONS)
         self.sum_rewards = np.zeros(self.shape, dtype=np.float32)
         self.counts = np.zeros(self.shape, dtype=np.int32)
-        self.Q = np.ones(self.shape, dtype=np.float32)
-        self.Q[:,:,:,1]=2
+        self.Q = np.zeros(self.shape, dtype=np.float32)
+        #self.Q[:,:,:,1]=2
         # device arrays
         self.d_sum_rewards = cuda.to_device(self.sum_rewards)
         self.d_counts = cuda.to_device(self.counts)
@@ -474,49 +545,105 @@ class AI_Blackjack_GPU_ES:
         if self.rng_states is None or self.rng_states.size != n_threads:
             self.rng_states = create_xoroshiro128p_states(n_threads, seed=self.seed)
 
-    def train(self, episodes=200000, batch_size=50000, threads_per_block=256):
-        """
-        episodes: total episodes to run
-        batch_episodes: how many episodes to simulate per host-device round
-        """
+    # def train(self, episodes=200000, batch_size=50000, threads_per_block=256):
+    #     """
+    #     episodes: total episodes to run
+    #     batch_episodes: how many episodes to simulate per host-device round
+    #     """
+    #     remaining = episodes
+    #     while remaining > 0:
+    #         cur_batch = min(remaining, batch_size)
+    #         # compute threads and ep_per_thread
+    #         # pick n_threads = blocks * threads_per_block
+    #         n_threads = 1024  # choose baseline threads; can be tuned
+    #         blocks = max(1, (n_threads + threads_per_block - 1)//threads_per_block)
+    #         n_threads = blocks * threads_per_block
+    #         ep_per_thread = max(1, cur_batch // n_threads)
+    #         # ensure rng
+    #         self._ensure_rng(n_threads)
+    #
+    #         # reset device accumulators
+    #         cuda.to_device(np.zeros(self.shape, dtype=np.float32), to=self.d_sum_rewards)
+    #         cuda.to_device(np.zeros(self.shape, dtype=np.int32), to=self.d_counts)
+    #
+    #         # copy current Q to device
+    #         self.d_Q.copy_to_device(self.Q.astype(np.float32))
+    #
+    #         # run kernel
+    #         play_episodes_es_kernel[blocks, threads_per_block](self.d_Q,
+    #                                                         self.rng_states,
+    #                                                         self.d_sum_rewards,
+    #                                                         self.d_counts,
+    #                                                         np.int32(ep_per_thread))
+    #         cuda.synchronize()
+    #
+    #         # pull sums and counts
+    #         sum_rewards = self.d_sum_rewards.copy_to_host()
+    #         counts = self.d_counts.copy_to_host()
+    #
+    #         # aggregate into host arrays
+    #         # convert to float64 for stability in averaging
+    #         mask = counts > 0
+    #         self.sum_rewards[mask] += sum_rewards[mask].astype(np.float64)
+    #         self.counts[mask] += counts[mask]
+    #
+    #         # recompute Q where counts>0
+    #         mask2 = self.counts > 0
+    #         self.Q[mask2] = (self.sum_rewards[mask2] / self.counts[mask2]).astype(np.float32)
+    #
+    #         remaining -= cur_batch
+    #         print(f"[GPU] Completed batch of {cur_batch} episodes. Remaining: {remaining}")
+
+    def train(self, episodes=200_000, target_episodes_per_thread=32):
+        batch_size = episodes // 10
+        threads_per_block = 256
         remaining = episodes
+
         while remaining > 0:
             cur_batch = min(remaining, batch_size)
-            # compute threads and ep_per_thread
-            # pick n_threads = blocks * threads_per_block
-            n_threads = 1024  # choose baseline threads; can be tuned
-            blocks = max(1, (n_threads + threads_per_block - 1)//threads_per_block)
+
+            # --- Dobór liczby wątków dla kernelu MC ---
+            n_threads = max(8192, cur_batch // target_episodes_per_thread)
+            blocks = (n_threads + threads_per_block - 1) // threads_per_block
             n_threads = blocks * threads_per_block
+
             ep_per_thread = max(1, cur_batch // n_threads)
-            # ensure rng
+
+            # --- RNG ---
             self._ensure_rng(n_threads)
 
-            # reset device accumulators
-            cuda.to_device(np.zeros(self.shape, dtype=np.float32), to=self.d_sum_rewards)
-            cuda.to_device(np.zeros(self.shape, dtype=np.int32), to=self.d_counts)
+            # --- reset sum/count ---
+            threads_zero = 256
+            # większy grid dla zerowania, np. min 1024 bloków
+            blocks_zero = max(1024, (self.d_sum_rewards.size + threads_zero - 1) // threads_zero)
+            zero_array[blocks_zero, threads_zero](self.d_sum_rewards)
 
-            # copy current Q to device
-            self.d_Q.copy_to_device(self.Q.astype(np.float32))
-
-            # run kernel
-            play_episodes_es_kernel[blocks, threads_per_block](self.d_Q,
-                                                            self.rng_states,
-                                                            self.d_sum_rewards,
-                                                            self.d_counts,
-                                                            np.int32(ep_per_thread))
+            blocks_zero = max(1024, (self.d_counts.size + threads_zero - 1) // threads_zero)
+            zero_array[blocks_zero, threads_zero](self.d_counts)
             cuda.synchronize()
 
-            # pull sums and counts
+            # --- kopiowanie Q na GPU ---
+            self.d_Q.copy_to_device(self.Q)
+
+            # --- uruchomienie kernela ---
+            blocks_kernel = blocks  # używamy wcześniej obliczonego blocks
+            play_episodes_es_kernel[blocks_kernel, threads_per_block](
+                self.d_Q,
+                self.rng_states,
+                self.d_sum_rewards,
+                self.d_counts,
+                np.int32(ep_per_thread)
+            )
+            cuda.synchronize()
+
+            # --- pobranie wyników ---
             sum_rewards = self.d_sum_rewards.copy_to_host()
             counts = self.d_counts.copy_to_host()
 
-            # aggregate into host arrays
-            # convert to float64 for stability in averaging
             mask = counts > 0
-            self.sum_rewards[mask] += sum_rewards[mask].astype(np.float64)
+            self.sum_rewards[mask] += sum_rewards[mask]
             self.counts[mask] += counts[mask]
 
-            # recompute Q where counts>0
             mask2 = self.counts > 0
             self.Q[mask2] = (self.sum_rewards[mask2] / self.counts[mask2]).astype(np.float32)
 
