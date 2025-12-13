@@ -1,8 +1,7 @@
-import random
 import numpy as np
 import cupy as cp
 
-from Blackjack import Blackjack
+from Code.old.Blackjack import Blackjack
 
 
 class AI_Blackjack_CUDA_cupy:

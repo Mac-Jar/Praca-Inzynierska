@@ -1,5 +1,4 @@
-from Blackjack import Card
-from Blackjack import Blackjack
+from Code.old.Blackjack import Blackjack
 import random
 
 class AI:

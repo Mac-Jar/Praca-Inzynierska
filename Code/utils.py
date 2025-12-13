@@ -373,6 +373,302 @@ def plot_convergence(agreement, title):
 #     cbar.set_label("Agreement (1 = correct, -1 = incorrect)")
 #     plt.suptitle(title, fontsize=16)
 #     plt.show()
+def compute_accuracy_vs_optimal(ai, optimal_hard, optimal_soft, verbose=True):
+    """
+    Porównuje politykę agenta `ai` z optymalnymi tabelami (HIT=1 / STAND=0).
+    Zwraca dict z metrykami:
+      - hard_perstate_pct, soft_perstate_pct, overall_perstate_pct
+      - hard_weighted_pct, soft_weighted_pct, overall_weighted_pct
+      - counts: odwiedziny per-state (shape (PS_MAX, DC_MAX, UA_MAX))
+      - agreement_hard, agreement_soft (macierze -1/0/1)
+    Wymaga, by `ai` miał metodę get_greedy_action(state) i atrybut counts (opcjonalnie).
+    """
+    # 1) porównanie per-state
+    agreement_hard, agreement_soft = compare_policy_to_optimal(ai, optimal_hard, optimal_soft)
+
+    # Hard per-state (ignorujemy pola z 0)
+    hard_mask = (agreement_hard != 0)
+    hard_correct = int((agreement_hard[hard_mask] == 1).sum())
+    hard_total = int(hard_mask.sum())
+    hard_perstate_pct = 100.0 * hard_correct / hard_total if hard_total > 0 else 0.0
+
+    # Soft per-state: tylko player_sum 12..21, dealer 1..10
+    soft_mask_valid = np.zeros_like(agreement_soft, dtype=bool)
+    soft_mask_valid[12:22, 1:11] = True
+    soft_mask = soft_mask_valid & (agreement_soft != 0)
+    soft_correct = int((agreement_soft[soft_mask] == 1).sum())
+    soft_total = int(soft_mask.sum())
+    soft_perstate_pct = 100.0 * soft_correct / soft_total if soft_total > 0 else 0.0
+
+    # Overall per-state
+    overall_correct = hard_correct + soft_correct
+    overall_total = hard_total + soft_total
+    overall_perstate_pct = 100.0 * overall_correct / overall_total if overall_total > 0 else 0.0
+
+    # 2) visit-weighted accuracy (jeśli dostępne counts)
+    counts = getattr(ai, 'counts', None)
+    hard_weighted_pct = soft_weighted_pct = overall_weighted_pct = None
+    if counts is not None:
+        # visits per state (sum over actions)
+        visits = counts.sum(axis=-1)  # shape (PS_MAX, DC_MAX, UA_MAX)
+        # Hard: slice 4..21, dealer 1..10, usable=0
+        hard_visits = visits[4:22, 1:11, 0]
+        hard_agree = agreement_hard[4:22, 1:11]  # -1/0/1
+        hard_visits_mask = hard_agree != 0
+        hard_weighted_correct = float((hard_visits * (hard_agree == 1)).sum())
+        hard_weighted_total = float(hard_visits.sum())
+        hard_weighted_pct = 100.0 * hard_weighted_correct / hard_weighted_total if hard_weighted_total > 0 else 0.0
+
+        # Soft: usable=1, mask out rows <12
+        soft_visits = visits[4:22, 1:11, 1]  # shape (18, 10)
+        soft_agree = agreement_soft[4:22, 1:11]  # shape (18, 10)
+
+        # row_mask: True dla wierszy które chcemy zachować (player_sum >= 12)
+        row_mask = np.array([ps >= 12 for ps in range(4, 22)], dtype=bool)  # shape (18,)
+
+        # Zastosuj maskę do wierszy (ustaw wiersze <12 na 0)
+        soft_agree_masked = soft_agree.copy()
+        soft_agree_masked[~row_mask, :] = 0
+
+        # Zastosuj maskę do visits (wyzeruj wiersze <12)
+        soft_visits_masked = soft_visits.copy()
+        soft_visits_masked[~row_mask, :] = 0
+
+        soft_weighted_correct = float((soft_visits_masked * (soft_agree_masked == 1)).sum())
+        soft_weighted_total = float(soft_visits_masked.sum())
+        soft_weighted_pct = 100.0 * soft_weighted_correct / soft_weighted_total if soft_weighted_total > 0 else 0.0
+
+        overall_weighted_correct = hard_weighted_correct + soft_weighted_correct
+        overall_weighted_total = hard_weighted_total + soft_weighted_total
+        overall_weighted_pct = 100.0 * overall_weighted_correct / overall_weighted_total if overall_weighted_total > 0 else 0.0
+
+        hard_weighted_pct = hard_weighted_pct
+        soft_weighted_pct = soft_weighted_pct
+        overall_weighted_pct = overall_weighted_pct
+
+    # 3) przygotowanie wyniku
+    results = {
+        "hard_perstate_pct": hard_perstate_pct,
+        "soft_perstate_pct": soft_perstate_pct,
+        "overall_perstate_pct": overall_perstate_pct,
+        "hard_perstate_counts": (hard_correct, hard_total),
+        "soft_perstate_counts": (soft_correct, soft_total),
+        "agreement_hard": agreement_hard,
+        "agreement_soft": agreement_soft,
+        "counts": counts,
+        "hard_weighted_pct": hard_weighted_pct,
+        "soft_weighted_pct": soft_weighted_pct,
+        "overall_weighted_pct": overall_weighted_pct
+    }
+
+    if verbose:
+        print(f"Hard accuracy (per-state): {hard_perstate_pct:.2f}%  ({hard_correct}/{hard_total})")
+        print(f"Soft accuracy (per-state): {soft_perstate_pct:.2f}%  ({soft_correct}/{soft_total})")
+        print(f"Overall accuracy (per-state): {overall_perstate_pct:.2f}%  ({overall_correct}/{overall_total})")
+        if counts is not None:
+            print(f"Hard accuracy (visit-weighted): {hard_weighted_pct:.2f}%")
+            print(f"Soft accuracy (visit-weighted): {soft_weighted_pct:.2f}%")
+            print(f"Overall accuracy (visit-weighted): {overall_weighted_pct:.2f}%")
+
+    return results
+
+# utils.py (dopisz)
+import numpy as np
+
+def make_training_history():
+    """Zwraca pustą strukturę do logowania historii treningu."""
+    return {
+        "batches": [],                # numer batchu / epoka
+        "hard_perstate": [],          # per-state %
+        "soft_perstate": [],
+        "overall_perstate": [],
+        "hard_weighted": [],          # visit-weighted %
+        "soft_weighted": [],
+        "overall_weighted": [],
+        "policy_hard_snapshots": [],  # list of arrays shape (22,11) or sliced (4:22,1:11)
+        "policy_soft_snapshots": [],
+    }
+def plot_accuracy_history(history, title="Accuracy over training"):
+    import matplotlib.pyplot as plt
+    batches = history["batches"]
+    plt.figure(figsize=(10,5))
+    # per-state
+    plt.plot(batches, history["overall_perstate"], label="Overall per-state")
+    plt.plot(batches, history["hard_perstate"], label="Hard per-state", alpha=0.8)
+    plt.plot(batches, history["soft_perstate"], label="Soft per-state",  alpha=0.8)
+
+    plt.xlabel("Batch index")
+    plt.ylabel("Accuracy (%)")
+    plt.title(title)
+    plt.legend(loc='best', fontsize='small')
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+def plot_policy_snapshots(history, n_snapshots=6, usable=0, title_prefix="Policy evolution"):
+    import matplotlib.pyplot as plt
+    import numpy as np
+    snaps = history["policy_hard_snapshots"] if usable==0 else history["policy_soft_snapshots"]
+    total = len(snaps)
+    if total == 0:
+        print("No snapshots recorded.")
+        return
+    idxs = np.linspace(0, total-1, min(n_snapshots, total), dtype=int)
+    fig, axes = plt.subplots(1, len(idxs), figsize=(3*len(idxs), 4))
+    for ax, i in zip(axes, idxs):
+        data = snaps[i]
+        im = ax.imshow(data, origin='lower', cmap='coolwarm', vmin=0, vmax=1, extent=[1,10,12,21], aspect='auto')
+        ax.set_title(f"batch {history['batches'][i]}")
+        ax.set_xlabel("Dealer")
+        ax.set_ylabel("Player sum")
+    fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.6, label="0=STAND,1=HIT")
+    plt.suptitle(f"{title_prefix} (usable={usable})")
+    plt.tight_layout(rect=[0,0,1,0.95])
+    plt.show()
+
+def animate_policy(history, usable=0, interval=500, save_path=None):
+    """
+    Tworzy animację polityki. interval w ms.
+    Jeśli save_path podany i masz ffmpeg/kaleido, zapisze plik (mp4/gif).
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib import animation
+    import numpy as np
+
+    snaps = history["policy_hard_snapshots"] if usable==0 else history["policy_soft_snapshots"]
+    batches = history["batches"]
+    if len(snaps) == 0:
+        print("No snapshots to animate.")
+        return
+
+    fig, ax = plt.subplots(figsize=(6,5))
+    im = ax.imshow(snaps[0], origin='lower', cmap='coolwarm', vmin=0, vmax=1, extent=[1,10,12,21], aspect='auto')
+    ax.set_xlabel("Dealer"); ax.set_ylabel("Player sum")
+    title = ax.text(0.5, 1.05, f"batch {batches[0]}", transform=ax.transAxes, ha='center')
+
+    def update(frame):
+        im.set_data(snaps[frame])
+        title.set_text(f"batch {batches[frame]}")
+        return im, title
+
+    ani = animation.FuncAnimation(fig, update, frames=len(snaps), interval=interval, blit=False)
+    plt.colorbar(im, ax=ax, label="0=STAND,1=HIT")
+    plt.suptitle(f"Policy evolution (usable={usable})")
+    plt.tight_layout(rect=[0,0,1,0.95])
+
+    if save_path:
+        # save as mp4 or gif depending on extension
+        ani.save(save_path, writer='ffmpeg', dpi=150)
+        print(f"Saved animation to {save_path}")
+    else:
+        plt.show()
+
+
+def log_training_step(history, batch_idx, ai, optimal_hard, optimal_soft, snapshot_policy=True, verbose=False):
+    """
+    Oblicza accuracy i dopisuje do history. Zwraca zaktualizowane history.
+    - batch_idx: numer batchu (int)
+    - ai: agent (musi mieć get_greedy_action i counts oraz Q)
+    - optimal_hard/soft: tabele optymalne
+    - snapshot_policy: czy zapisać macierze polityki (można pominąć, by oszczędzić pamięć)
+    """
+    res = compute_accuracy_vs_optimal(ai, optimal_hard, optimal_soft, verbose=False)
+    history["batches"].append(batch_idx)
+    history["hard_perstate"].append(res["hard_perstate_pct"])
+    history["soft_perstate"].append(res["soft_perstate_pct"])
+    history["overall_perstate"].append(res["overall_perstate_pct"])
+    history["hard_weighted"].append(res["hard_weighted_pct"])
+    history["soft_weighted"].append(res["soft_weighted_pct"])
+    history["overall_weighted"].append(res["overall_weighted_pct"])
+
+    if snapshot_policy:
+        # snapshot polityki (0..1) dla player 4..21, dealer 1..10
+        Q = ai.Q
+        try:
+            import cupy as cp
+            if isinstance(Q, cp.ndarray):
+                Q = cp.asnumpy(Q)
+        except ImportError:
+            pass
+        policy_hard = np.argmax(Q[:, :, 0, :], axis=-1)  # shape (PS_MAX, DC_MAX)
+        policy_soft = np.argmax(Q[:, :, 1, :], axis=-1)
+        # przechowujemy tylko zakres 4:22,1:11 żeby oszczędzić miejsce
+        history["policy_hard_snapshots"].append(policy_hard[4:22, 1:11].copy())
+        history["policy_soft_snapshots"].append(policy_soft[4:22, 1:11].copy())
+
+    if verbose:
+        print(f"[log] batch {batch_idx}: overall_perstate={res['overall_perstate_pct']:.2f}%, overall_weighted={res['overall_weighted_pct']:.2f}%")
+    return history
+
+
+
+def plot_value_3d_matplotlib(ai, title="State-value v* (Matplotlib 3D)",
+                             y_base=10, view=(30, 120), box_aspect=(1, 1, 0.5)):
+    """
+    Rysuje 3D surface dla player_sum 12..21 i dealer 1..10.
+    Domyślnie ustawia 12 bliżej widza (invert_yaxis=True) i y_base=10/11
+    by "linia osi" była na poziomie ~10/11 zamiast 5.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+    Q = ai.Q
+    try:
+        import cupy as cp
+        if isinstance(Q, cp.ndarray):
+            Q = cp.asnumpy(Q)
+    except ImportError:
+        pass
+
+    # dane: player 12..21, dealer 1..10
+    ps_idx = np.arange(12, 22)   # player 12..21
+    dc_idx = np.arange(1, 11)    # dealer 1..10
+    X, Y = np.meshgrid(dc_idx, ps_idx)  # X: dealer, Y: player
+
+    v_hard = np.max(Q[12:22, 1:11, 0, :], axis=-1)
+    v_soft = np.max(Q[12:22, 1:11, 1, :], axis=-1)
+
+    fig = plt.figure(figsize=(12, 6))
+    ax1 = fig.add_subplot(1, 2, 1, projection='3d')
+    surf1 = ax1.plot_surface(X, Y, v_soft, cmap='viridis', edgecolor='none')
+    ax1.set_title("v* usable ace = 1")
+    ax1.set_xlabel("Dealer (1–10)")
+    ax1.set_ylabel("Player sum")
+    ax1.set_zlabel("Value")
+    ax1.view_init(elev=view[0], azim=view[1])
+    fig.colorbar(surf1, ax=ax1, shrink=0.6)
+
+    ax2 = fig.add_subplot(1, 2, 2, projection='3d')
+    surf2 = ax2.plot_surface(X, Y, v_hard, cmap='viridis', edgecolor='none')
+    ax2.set_title("v* usable ace = 0")
+    ax2.set_xlabel("Dealer (1–10)")
+    ax2.set_ylabel("Player sum")
+    ax2.set_zlabel("Value")
+    ax2.view_init(elev=view[0], azim=view[1])
+    fig.colorbar(surf2, ax=ax2, shrink=0.6)
+
+    # ustaw dolną granicę osi Y tak, by "linia" była na 10/11
+    y_min = float(y_base)   # np. 10 lub 11
+    y_max = 21.0
+    ax1.set_ylim(y_min, y_max)
+    ax2.set_ylim(y_min, y_max)
+
+    # odwróć oś Y, żeby mniejsze wartości (12) były bliżej widza
+    ax1.invert_yaxis()
+    ax2.invert_yaxis()
+
+    # dopasuj proporcje pudełka, żeby zmniejszyć pustą przestrzeń w pionie
+    try:
+        ax1.set_box_aspect(box_aspect)  # (x, y, z)
+        ax2.set_box_aspect(box_aspect)
+    except Exception:
+        pass  # starsze matplotlib mogą nie wspierać set_box_aspect dla 3D
+
+    plt.suptitle(title)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.show()
+
 def plot_convergence_dual(agreement_hard, agreement_soft, title="Policy Convergence"):
     hard = agreement_hard[4:22, 1:11]
     soft = agreement_soft[4:22, 1:11]

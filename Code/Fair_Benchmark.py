@@ -1,15 +1,9 @@
-import time
-import numpy as np
-from AI_Blackjack_CPU import *
-from AI_Blackjack_CUDA_numba import *
-from AI_Blackjack_CUDA_cupy_simplified_blackjack import AI_Blackjack_CuPy
-from utils import *
-from utils import generate_optimal_tables
+from AI_Blackjack_CPU_EpsilonGreedy import *
+from AI_Blackjack_CPU_ES import *
+from AI_Blackjack_CUDA_EpsilonGreedy import *
+from AI_Blackjack_CUDA_ES import *
 
-# Zakładam, że masz gotowe klasy:
-# AI_Blackjack_CPU
-# AI_Blackjack_GPU (Numba CUDA)
-# AI_Blackjack_CuPy
+from utils import *
 
 EPISODES = 10**10
 BATCH_SIZE = 100000
@@ -21,64 +15,76 @@ def benchmark_and_show_policy(ai_class, backend_name="CPU"):
     ai = ai_class(epsilon=0.1)
     start = time.time()
     if backend_name == "CPU":
-        ai.train(episodes=EPISODES)
+        history=ai.train(episodes=EPISODES)
     else:
-        ai.train(episodes=EPISODES)
+        history=ai.train(episodes=EPISODES)
     end = time.time()
     print(f"{backend_name} training time: {end - start:.2f} s\n")
-    # plot_dealer_ace_visits(ai.counts, usable=0)
-    # plot_dealer_ace_visits(ai.counts, usable=1)
-    ai.evaluate_policy(print_n=False)
+
+    plot_accuracy_history(history, title="GPU ES — Accuracy over training")
+
+    # pokaż kilka snapshotów polityki
+    plot_policy_snapshots(history, n_snapshots=6, usable=0, title_prefix="GPU ES policy (hard)")
+    plot_policy_snapshots(history, n_snapshots=6, usable=1, title_prefix="GPU ES policy (soft)")
+
+    ai.evaluate_policy(print_n=True)
 
     agreement_hard, agreement_soft = compare_policy_to_optimal(
         ai, optimal_hard, optimal_soft
     )
 
-    hard_pct = np.mean(agreement_hard[agreement_hard != 0] == 1) * 100
-    soft_mask = np.zeros_like(agreement_soft, dtype=bool)
-    soft_mask[12:22, 1:11] = True
-    soft_pct = np.mean(agreement_soft[soft_mask] == 1) * 100
+    results = compute_accuracy_vs_optimal(ai, optimal_hard, optimal_soft, verbose=False)
+    # dostęp do wartości:
+    hard_pct = results["hard_perstate_pct"]
+    soft_pct = results["soft_perstate_pct"]
+    overall_pct = results["overall_perstate_pct"]
 
     print(f"Hard accuracy: {hard_pct}%")
     print(f"Soft accuracy: {soft_pct:}%")
-
+    print(f"Overall accuracy: {overall_pct:}%")
     # plot_convergence(agreement_hard, title=f"{backend_name} – HARD totals")
     # plot_convergence(agreement_soft, title=f"{backend_name} – SOFT totals")
     plot_convergence_dual(agreement_hard, agreement_soft, title=f"{backend_name} – Convergence")
     plot_learned_policy_annotated(ai, title=f"{backend_name} – Learned Strategy")
+    plot_value_3d_matplotlib(ai, title=f"{backend_name} — Value & Policy")
     return ai
 def benchmark_and_show_policy_es(ai_class, backend_name="CPU ES"):
     print(f"=== Benchmark {backend_name} ===")
     ai = ai_class()
     start = time.time()
-    if backend_name == "CPU ES":
-        ai.train(episodes=EPISODES)
+    if backend_name == "CPU":
+        history = ai.train(episodes=EPISODES)
     else:
-        ai.train(episodes=EPISODES)
+        history = ai.train(episodes=EPISODES)
     end = time.time()
-
     print(f"{backend_name} training time: {end - start:.2f} s\n")
-    # plot_dealer_ace_visits(ai.counts, usable=0)
-    # plot_dealer_ace_visits(ai.counts, usable=1)
-    ai.evaluate_policy(print_n=False)
 
+    plot_accuracy_history(history, title="GPU ES — Accuracy over training")
+
+    # pokaż kilka snapshotów polityki
+    plot_policy_snapshots(history, n_snapshots=6, usable=0, title_prefix="GPU ES policy (hard)")
+    plot_policy_snapshots(history, n_snapshots=6, usable=1, title_prefix="GPU ES policy (soft)")
+
+    ai.evaluate_policy(print_n=True)
     # NOWE porównanie
     agreement_hard, agreement_soft = compare_policy_to_optimal(
         ai, optimal_hard, optimal_soft
     )
 
-    hard_pct = np.mean(agreement_hard[agreement_hard != 0] == 1) * 100
-    soft_mask = np.zeros_like(agreement_soft, dtype=bool)
-    soft_mask[12:22, 1:11] = True
-    soft_pct = np.mean(agreement_soft[soft_mask] == 1) * 100
+    results = compute_accuracy_vs_optimal(ai, optimal_hard, optimal_soft, verbose=False)
+    # dostęp do wartości:
+    hard_pct = results["hard_perstate_pct"]
+    soft_pct = results["soft_perstate_pct"]
+    overall_pct = results["overall_perstate_pct"]
 
-    print(f"Hard accuracy: {hard_pct:.2f}%")
-    print(f"Soft accuracy: {soft_pct:.2f}%")
-
+    print(f"Hard accuracy: {hard_pct}%")
+    print(f"Soft accuracy: {soft_pct:}%")
+    print(f"Overall accuracy: {overall_pct:}%")
     # plot_convergence(agreement_hard, title=f"{backend_name} – HARD totals")
     # plot_convergence(agreement_soft, title=f"{backend_name} – SOFT totals")
     plot_convergence_dual(agreement_hard, agreement_soft, title=f"{backend_name} – Convergence")
     plot_learned_policy_annotated(ai, title=f"{backend_name} – Learned Strategy")
+    plot_value_3d_matplotlib(ai, title=f"{backend_name} — Value & Policy")
     return ai
 if __name__ == "__main__":
     # CPU

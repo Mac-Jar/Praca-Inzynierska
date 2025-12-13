@@ -1,5 +1,5 @@
-from AI_Blackjack import AI_Blackjack
-from AI_Blackjack_CUDA_cupy import AI_Blackjack_CUDA_cupy
+from Code.old.AI_Blackjack import AI_Blackjack
+from Code.cupy.AI_Blackjack_CUDA_cupy import AI_Blackjack_CUDA_cupy
 import time
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ import numpy as np
 import random
 
 
-from Blackjack import Blackjack
+from Code.old.Blackjack import Blackjack
 
 class AI_Blackjack:
     def __init__(self,epsilon=0.1,gamma=1.0,alpha=0.1):
