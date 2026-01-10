@@ -1,6 +1,6 @@
 
 import numpy as np
-from numba import cuda
+from numba import cuda, float32, int32
 from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32
 import math
 import time
@@ -10,7 +10,7 @@ PS_MAX = 32
 DC_MAX = 11
 UA_MAX = 2
 ACTIONS = 2
-
+TOTAL_STATES = PS_MAX * DC_MAX * UA_MAX * ACTIONS
 # device helpers
 @cuda.jit(device=True, inline=True)
 def evaluate_hand_gpu(cards_vals, n):
@@ -64,180 +64,209 @@ def sum_and_usable_ace(cards_vals, n):
 
 @cuda.jit
 def play_episodes_es_kernel(dev_Q,
-                            rng_states,
-                            dev_sum_rewards,
-                            dev_counts,
-                            episodes_per_thread):
-    tid = cuda.grid(1)
-    if tid >= rng_states.shape[0]:
-        return
+                                   rng_states,
+                                   dev_sum_rewards,
+                                   dev_counts,
+                                   episodes_per_thread):
+    # --- Shared memory: 1D tablice per blok ---
+    block_sum = cuda.shared.array(TOTAL_STATES, dtype=float32)
+    block_count = cuda.shared.array(TOTAL_STATES, dtype=int32)
 
-    visited_states = cuda.local.array(60, dtype=np.int32)
-    visited_actions = cuda.local.array(20, dtype=np.int32)
+    gid = cuda.grid(1)         # globalny indeks wątku
+    tid = cuda.threadIdx.x     # lokalny indeks w bloku
+    block_size = cuda.blockDim.x
 
-    for ep in range(episodes_per_thread):
+    active = gid < rng_states.shape[0]
 
-        # -----------------------------
-        # 1. Exploring Start: losowy stan
-        # -----------------------------
-        # gdy chcemy jedynie sprawdzać od 12 tp
-        # ps = int(xoroshiro128p_uniform_float32(rng_states, tid) * 10) + 12   # 12..21
-        #gdy chcemy sprawdzać od 4:
-        ps = int(xoroshiro128p_uniform_float32(rng_states, tid) * 18) + 4  # 4..21
+    # --- Zerowanie shared memory ---
+    for i in range(tid, TOTAL_STATES, block_size):
+        block_sum[i] = 0.0
+        block_count[i] = 0
+    cuda.syncthreads()
 
-        dealer_up = int(xoroshiro128p_uniform_float32(rng_states, tid) * 10) + 1  # 1..10
-        usable = 1 if xoroshiro128p_uniform_float32(rng_states, tid) < 0.5 else 0
+    if active:
+        visited_states = cuda.local.array(60, dtype=np.int32)
+        visited_actions = cuda.local.array(20, dtype=np.int32)
 
-        # skonstruuj rękę gracza tak, aby dawała player_sum == ps
-        pcards = cuda.local.array(12, dtype=np.int32)
-        p_n = 0
-        rest = ps
+        for ep in range(episodes_per_thread):
 
-        if usable == 1:
-            pcards[p_n] = 11
-            p_n += 1
-            rest -= 11
+            # -----------------------------
+            # 1. Exploring Start: losowy stan
+            # -----------------------------
+            ps = int(xoroshiro128p_uniform_float32(rng_states, gid) * 18) + 4  # 4..21
+            dealer_up = int(xoroshiro128p_uniform_float32(rng_states, gid) * 10) + 1  # 1..10
+            usable = 1 if xoroshiro128p_uniform_float32(rng_states, gid) < 0.5 else 0
 
-        while rest > 0:
-            card = int(xoroshiro128p_uniform_float32(rng_states, tid) * 9) + 2  # 2..10
-            if card > rest:
-                card = rest
-            pcards[p_n] = card
-            p_n += 1
-            rest -= card
+            # skonstruuj rękę gracza tak, aby dawała player_sum == ps
+            pcards = cuda.local.array(12, dtype=np.int32)
+            p_n = 0
+            rest = ps
 
-        # dealer ma kartę odkrytą + jedną losową
-        dcards = cuda.local.array(12, dtype=np.int32)
-        d_n = 0
-        dcards[d_n] = dealer_up
-        d_n += 1
-        v = draw_card(rng_states, tid)
-        dcards[d_n] = map_card_value(v)
-        d_n += 1
+            if usable == 1:
+                pcards[p_n] = 11
+                p_n += 1
+                rest -= 11
 
-        # -----------------------------
-        # 2. Pierwsza akcja = losowa (exploring start)
-        # -----------------------------
-        a = 1 if xoroshiro128p_uniform_float32(rng_states, tid) < 0.5 else 0
-        if ps >= 21:
-            a = 0  # nigdy nie HIT przy 21
+            while rest > 0:
+                card = int(xoroshiro128p_uniform_float32(rng_states, gid) * 9) + 2  # 2..10
+                if card > rest:
+                    card = rest
+                pcards[p_n] = card
+                p_n += 1
+                rest -= card
 
-        step = 0
-        v_idx = 0
+            # dealer ma kartę odkrytą + jedną losową
+            dcards = cuda.local.array(12, dtype=np.int32)
+            d_n = 0
+            dcards[d_n] = dealer_up
+            d_n += 1
+            v = draw_card(rng_states, gid)
+            dcards[d_n] = map_card_value(v)
+            d_n += 1
 
-        visited_states[v_idx] = ps
-        visited_states[v_idx+1] = dealer_up
-        visited_states[v_idx+2] = usable
-        visited_actions[step] = a
-        v_idx += 3
-        step += 1
+            # -----------------------------
+            # 2. Pierwsza akcja = losowa (exploring start)
+            # -----------------------------
+            a = 1 if xoroshiro128p_uniform_float32(rng_states, gid) < 0.5 else 0
 
-        # efekt akcji
-        if a == 1:
-            v = draw_card(rng_states, tid)
-            pcards[p_n] = map_card_value(v)
-            p_n += 1
-            if evaluate_hand_gpu(pcards, p_n) > 21:
-                reward = -1.0
-                base = 0
-                for i in range(step):
-                    ps2 = visited_states[base]
-                    dc2 = visited_states[base+1]
-                    ua2 = visited_states[base+2]
-                    aa = visited_actions[i]
-                    cuda.atomic.add(dev_sum_rewards, (ps2, dc2, ua2, aa), reward)
-                    cuda.atomic.add(dev_counts, (ps2, dc2, ua2, aa), 1)
-                    base += 3
-                continue
+            step = 0
+            v_idx = 0
 
-        # -----------------------------
-        # 3. Reszta gry — greedy( Q )
-        # -----------------------------
-        while True:
-            p_sum, usable_idx = sum_and_usable_ace(pcards, p_n)
+            visited_states[v_idx]   = ps
+            visited_states[v_idx+1] = dealer_up
+            visited_states[v_idx+2] = usable
+            visited_actions[step]   = a
+            v_idx += 3
+            step += 1
 
-            # nigdy nie HIT przy 21 lub więcej
-            if p_sum >= 21:
-                ps_idx = p_sum if p_sum <= 31 else 31
+            play_greedy_phase = True
+            if a == 1:
+                v = draw_card(rng_states, gid)
+                pcards[p_n] = map_card_value(v)
+                p_n += 1
+                if evaluate_hand_gpu(pcards, p_n) > 21:
+                    reward = -1.0
+                    base = 0
+                    for i in range(step):
+                        ps2 = visited_states[base]
+                        dc2 = visited_states[base+1]
+                        ua2 = visited_states[base+2]
+                        aa  = visited_actions[i]
+                        idx = ((ps2 * DC_MAX + dc2) * UA_MAX + ua2) * ACTIONS + aa
+                        cuda.atomic.add(block_sum, idx, reward)
+                        cuda.atomic.add(block_count, idx, 1)
+                        base += 3
+                    continue
+            else:
+                play_greedy_phase = False
+
+            # -----------------------------
+            # 3. Reszta gry — greedy( Q )
+            # -----------------------------
+            while play_greedy_phase:
+                p_sum, usable_idx = sum_and_usable_ace(pcards, p_n)
+
+                # nigdy nie HIT przy 21 lub więcej
+                if p_sum >= 21:
+                    ps_idx = p_sum if p_sum <= 31 else 31
+                    dealer_idx = map_card_value(dcards[0])
+                    if dealer_idx == 11:
+                        dealer_idx = 1
+                    elif dealer_idx > 10:
+                        dealer_idx = 10
+                    if step < 20:
+                        visited_states[v_idx]   = ps_idx
+                        visited_states[v_idx+1] = dealer_idx
+                        visited_states[v_idx+2] = usable_idx
+                        visited_actions[step]   = 0  # STAND
+                        v_idx += 3
+                    step += 1
+                    break
+
+                ps_idx = p_sum
                 dealer_idx = map_card_value(dcards[0])
                 if dealer_idx == 11:
                     dealer_idx = 1
                 elif dealer_idx > 10:
                     dealer_idx = 10
+
+                q0 = dev_Q[ps_idx, dealer_idx, usable_idx, 0]
+                q1 = dev_Q[ps_idx, dealer_idx, usable_idx, 1]
+                a = 0 if q0 >= q1 else 1
+
                 if step < 20:
-                    visited_states[v_idx] = ps_idx
+                    visited_states[v_idx]   = ps_idx
                     visited_states[v_idx+1] = dealer_idx
                     visited_states[v_idx+2] = usable_idx
-                    visited_actions[step] = 0  # STAND
+                    visited_actions[step]   = a
                     v_idx += 3
                 step += 1
-                break
-            # if p_sum < 12:
-            #     a = 1
-            # else:
-            ps_idx = p_sum
-            dealer_idx = map_card_value(dcards[0])
-            if dealer_idx == 11:
-                dealer_idx = 1
-            elif dealer_idx > 10:
-                dealer_idx = 10
 
-            q0 = dev_Q[ps_idx, dealer_idx, usable_idx, 0]
-            q1 = dev_Q[ps_idx, dealer_idx, usable_idx, 1]
-            a = 0 if q0 >= q1 else 1
+                if a == 1:
+                    v = draw_card(rng_states, gid)
+                    pcards[p_n] = map_card_value(v)
+                    p_n += 1
+                else:
+                    break
 
-            if step < 20:
-                visited_states[v_idx] = ps_idx
-                visited_states[v_idx+1] = dealer_idx
-                visited_states[v_idx+2] = usable_idx
-                visited_actions[step] = a
-                v_idx += 3
-            step += 1
+                if step >= 20:
+                    break
 
-            if a == 1:
-                v = draw_card(rng_states, tid)
-                pcards[p_n] = map_card_value(v)
-                p_n += 1
-            else:
-                break
-
-            if step >= 20:
-                break
-
-        # -----------------------------
-        # 4. Dealer + reward
-        # -----------------------------
-        p_sum = evaluate_hand_gpu(pcards, p_n)
-        if p_sum > 21:
-            reward = -1.0
-        else:
-            while evaluate_hand_gpu(dcards, d_n) < 17:
-                v = draw_card(rng_states, tid)
-                dcards[d_n] = map_card_value(v)
-                d_n += 1
-            d_sum = evaluate_hand_gpu(dcards, d_n)
-            if d_sum > 21:
-                reward = 1.0
-            elif d_sum > p_sum:
+            # -----------------------------
+            # 4. Dealer + reward
+            # -----------------------------
+            p_sum = evaluate_hand_gpu(pcards, p_n)
+            if p_sum > 21:
                 reward = -1.0
-            elif d_sum < p_sum:
-                reward = 1.0
             else:
-                reward = 0.0
+                while evaluate_hand_gpu(dcards, d_n) < 17:
+                    v = draw_card(rng_states, gid)
+                    dcards[d_n] = map_card_value(v)
+                    d_n += 1
+                d_sum = evaluate_hand_gpu(dcards, d_n)
+                if d_sum > 21:
+                    reward = 1.0
+                elif d_sum > p_sum:
+                    reward = -1.0
+                elif d_sum < p_sum:
+                    reward = 1.0
+                else:
+                    reward = 0.0
 
-        # -----------------------------
-        # 5. atomic add MC update
-        # -----------------------------
-        visits = step if step < 20 else 20
-        base = 0
-        for i in range(visits):
-            ps2 = visited_states[base]
-            dc2 = visited_states[base+1]
-            ua2 = visited_states[base+2]
-            aa = visited_actions[i]
-            cuda.atomic.add(dev_sum_rewards, (ps2, dc2, ua2, aa), reward)
-            cuda.atomic.add(dev_counts, (ps2, dc2, ua2, aa), 1)
-            base += 3
+            # -----------------------------
+            # 5. atomic add MC update (do shared memory)
+            # -----------------------------
+            visits = step if step < 20 else 20
+            base = 0
+            for i in range(visits):
+                ps2 = visited_states[base]
+                dc2 = visited_states[base+1]
+                ua2 = visited_states[base+2]
+                aa  = visited_actions[i]
+                base += 3
+
+                idx = ((ps2 * DC_MAX + dc2) * UA_MAX + ua2) * ACTIONS + aa
+                cuda.atomic.add(block_sum, idx, reward)
+                cuda.atomic.add(block_count, idx, 1)
+
+    # --- wszyscy wątki w bloku dochodzą tutaj ---
+    cuda.syncthreads()
+
+    # --- redukcja shared -> global ---
+    for i in range(tid, TOTAL_STATES, block_size):
+        val_sum = block_sum[i]
+        val_cnt = block_count[i]
+        if val_cnt > 0:
+            ps = i // (DC_MAX * UA_MAX * ACTIONS)
+            rem = i %  (DC_MAX * UA_MAX * ACTIONS)
+            dc = rem // (UA_MAX * ACTIONS)
+            rem = rem %  (UA_MAX * ACTIONS)
+            ua = rem // ACTIONS
+            aa = rem %  ACTIONS
+
+            cuda.atomic.add(dev_sum_rewards, (ps, dc, ua, aa), val_sum)
+            cuda.atomic.add(dev_counts, (ps, dc, ua, aa), val_cnt)
+
 
 # rest of ai_gpu.py (wrapper)
 class AI_Blackjack_GPU_ES:
