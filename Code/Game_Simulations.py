@@ -120,7 +120,22 @@ def run_simulation(ai, label="GPU AI", n=200000):
 
     print("\n")
 
+def run_simulation_for2strategies(ai, ai2,label="GPU AI", label2="GPU AI2", n=200000):
+    print(f"\n=== Symulacja strategii: {label} ===")
 
+    tests = {
+        f"{label} vs Dealer": policy_ai(ai),
+        f"{label2} vs Dealer": policy_ai(ai2),
+        "Optimal vs Dealer": policy_optimal,
+        "Random vs Dealer": policy_random,
+        "Human-like vs Dealer": policy_human,
+    }
+
+    for name, pol in tests.items():
+        w, l, d, wr = simulate_many(pol, n)
+        print(f"{name}: W={w}, L={l}, D={d}, WinRate={wr*100:.3f}%")
+
+    print("\n")
 # ============================================================
 # === WYKONANIE SYMULACJI PO TRENINGU ========================
 # ============================================================

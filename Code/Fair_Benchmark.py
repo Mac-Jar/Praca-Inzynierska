@@ -5,7 +5,7 @@ from AI_Blackjack_CUDA_ES import *
 from Game_Simulations import *
 from utils import *
 
-EPISODES = 10**10
+EPISODES = 10**11
 optimal_hard, optimal_soft = generate_optimal_tables()
 plot_optimal_policy_annotated(optimal_hard, optimal_soft, title="Optimal Strategy")
 
@@ -164,3 +164,4 @@ if __name__ == "__main__":
     number_of_games_to_simulate = 5*10**5
     run_simulation(ai_gpu, "GPU MC-EpsilonGreedy",n=number_of_games_to_simulate)
     run_simulation(ai_gpu_es, "GPU MC-ES",n=number_of_games_to_simulate)
+    run_simulation_for2strategies(ai_gpu,ai_gpu_es,"GPU MC-EpsilonGreedy","GPU MC-ES",number_of_games_to_simulate)
