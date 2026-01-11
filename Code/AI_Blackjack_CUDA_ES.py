@@ -1,7 +1,8 @@
 
 import numpy as np
 from numba import cuda, float32, int32
-from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32
+from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32,xoroshiro128p_uniform_float64
+from numba.types import float64, int64
 import math
 import time
 from utils import *
@@ -35,7 +36,7 @@ def zero_array(arr):
 @cuda.jit(device=True, inline=True)
 def draw_card(rng_states, tid):
     # use xoroshiro uniform generator helper
-    return int(xoroshiro128p_uniform_float32(rng_states, tid) * 13) + 2  # gives 2..14, we'll map >=11 appropriately
+    return int(xoroshiro128p_uniform_float64(rng_states, tid) * 13) + 2  # gives 2..14, we'll map >=11 appropriately
 
 @cuda.jit(device=True, inline=True)
 def map_card_value(v):
@@ -69,8 +70,8 @@ def play_episodes_es_kernel(dev_Q,
                                    dev_counts,
                                    episodes_per_thread):
     # --- Shared memory: 1D tablice per blok ---
-    block_sum = cuda.shared.array(TOTAL_STATES, dtype=float32)
-    block_count = cuda.shared.array(TOTAL_STATES, dtype=int32)
+    block_sum = cuda.shared.array(TOTAL_STATES, dtype=float64)
+    block_count = cuda.shared.array(TOTAL_STATES, dtype=int64)
 
     gid = cuda.grid(1)         # globalny indeks wątku
     tid = cuda.threadIdx.x     # lokalny indeks w bloku
@@ -85,20 +86,20 @@ def play_episodes_es_kernel(dev_Q,
     cuda.syncthreads()
 
     if active:
-        visited_states = cuda.local.array(60, dtype=np.int32)
-        visited_actions = cuda.local.array(20, dtype=np.int32)
+        visited_states = cuda.local.array(60, dtype=np.int64)
+        visited_actions = cuda.local.array(20, dtype=np.int64)
 
         for ep in range(episodes_per_thread):
 
             # -----------------------------
             # 1. Exploring Start: losowy stan
             # -----------------------------
-            ps = int(xoroshiro128p_uniform_float32(rng_states, gid) * 18) + 4  # 4..21
-            dealer_up = int(xoroshiro128p_uniform_float32(rng_states, gid) * 10) + 1  # 1..10
-            usable = 1 if xoroshiro128p_uniform_float32(rng_states, gid) < 0.5 else 0
+            ps = int(xoroshiro128p_uniform_float64(rng_states, gid) * 18) + 4  # 4..21
+            dealer_up = int(xoroshiro128p_uniform_float64(rng_states, gid) * 10) + 1  # 1..10
+            usable = 1 if xoroshiro128p_uniform_float64(rng_states, gid) < 0.5 else 0
 
             # skonstruuj rękę gracza tak, aby dawała player_sum == ps
-            pcards = cuda.local.array(12, dtype=np.int32)
+            pcards = cuda.local.array(12, dtype=np.int64)
             p_n = 0
             rest = ps
 
@@ -108,7 +109,7 @@ def play_episodes_es_kernel(dev_Q,
                 rest -= 11
 
             while rest > 0:
-                card = int(xoroshiro128p_uniform_float32(rng_states, gid) * 9) + 2  # 2..10
+                card = int(xoroshiro128p_uniform_float64(rng_states, gid) * 9) + 2  # 2..10
                 if card > rest:
                     card = rest
                 pcards[p_n] = card
@@ -116,7 +117,7 @@ def play_episodes_es_kernel(dev_Q,
                 rest -= card
 
             # dealer ma kartę odkrytą + jedną losową
-            dcards = cuda.local.array(12, dtype=np.int32)
+            dcards = cuda.local.array(12, dtype=np.int64)
             d_n = 0
             dcards[d_n] = dealer_up
             d_n += 1
@@ -127,7 +128,7 @@ def play_episodes_es_kernel(dev_Q,
             # -----------------------------
             # 2. Pierwsza akcja = losowa (exploring start)
             # -----------------------------
-            a = 1 if xoroshiro128p_uniform_float32(rng_states, gid) < 0.5 else 0
+            a = 1 if xoroshiro128p_uniform_float64(rng_states, gid) < 0.5 else 0
 
             step = 0
             v_idx = 0
@@ -273,9 +274,9 @@ class AI_Blackjack_GPU_ES:
     def __init__(self, epsilon=0.1, device_threads=256, seed=1234):
         self.epsilon = epsilon
         self.shape = (PS_MAX, DC_MAX, UA_MAX, ACTIONS)
-        self.sum_rewards = np.zeros(self.shape, dtype=np.float32)
-        self.counts = np.zeros(self.shape, dtype=np.int32)
-        self.Q = np.zeros(self.shape, dtype=np.float32)
+        self.sum_rewards = np.zeros(self.shape, dtype=np.float64)
+        self.counts = np.zeros(self.shape, dtype=np.int64)
+        self.Q = np.zeros(self.shape, dtype=np.float64)
         #self.Q[:,:,:,1]=2
         # device arrays
         self.d_sum_rewards = cuda.to_device(self.sum_rewards)
@@ -337,7 +338,7 @@ class AI_Blackjack_GPU_ES:
                 self.rng_states,
                 self.d_sum_rewards,
                 self.d_counts,
-                np.int32(ep_per_thread)
+                np.int64(ep_per_thread)
             )
             cuda.synchronize()
 
@@ -350,12 +351,12 @@ class AI_Blackjack_GPU_ES:
             self.counts[mask] += counts[mask]
 
             mask2 = self.counts > 0
-            self.Q[mask2] = (self.sum_rewards[mask2] / self.counts[mask2]).astype(np.float32)
+            self.Q[mask2] = (self.sum_rewards[mask2] / self.counts[mask2]).astype(np.float64)
 
             # po zakończeniu batcha i po aktualizacji self.Q:
             remaining -= cur_batch
             batch_counter += 1
-            print(f"[GPU] Completed batch of {cur_batch} episodes. Remaining: {remaining}")
+            print(f"[GPU ES] Completed batch of {cur_batch} episodes. Remaining: {remaining}")
 
             # logowanie co `log_every` batchy
             if batch_counter % log_every == 0:

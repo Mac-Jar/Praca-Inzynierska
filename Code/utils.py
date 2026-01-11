@@ -2,10 +2,32 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
-
+import os
+from datetime import datetime
 # ------------------------------------------------------------
 #  OPTIMAL POLICY for Blackjack (HIT=1 / STAND=0)
 # ------------------------------------------------------------
+
+def auto_save_plot(algorithm_name, plot_type):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = algorithm_name.replace(" ", "_")
+    folder = os.path.join("plots", safe_name)
+    os.makedirs(folder, exist_ok=True)
+    filename = f"{timestamp}_{plot_type}.png"
+    return os.path.join(folder, filename)
+
+
+
+def save_plot(save_path):
+    """
+    Zapisuje aktualny wykres do pliku, tworząc katalogi jeśli trzeba.
+    Jeśli save_path=None — nic nie zapisuje.
+    """
+    if save_path is None:
+        return
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+
 
 def optimal_action(player_sum, dealer_card, usable_ace):
     # Terminal or invalid
@@ -32,7 +54,7 @@ def optimal_action(player_sum, dealer_card, usable_ace):
 
     return 0
 
-def plot_learned_policy(ai, title="Learned Policy"):
+def plot_learned_policy(ai, title="Learned Policy",save_path=None):
     import matplotlib.pyplot as plt, numpy as np
     Q = ai.Q
     try:
@@ -80,8 +102,11 @@ def plot_learned_policy(ai, title="Learned Policy"):
     cbar = fig.colorbar(im1, ax=axes.ravel().tolist(), shrink=0.85)
     cbar.set_label("Decision (0 = STAND, 1 = HIT)")
     plt.suptitle(title, fontsize=16)
+
+    if save_plot is not None:
+        save_plot(save_path)
     plt.show()
-def plot_optimal_policy(optimal_hard, optimal_soft, title="Optimal Policy"):
+def plot_optimal_policy(optimal_hard, optimal_soft, title="Optimal Policy",save_path=None):
     """
     Wizualizuje optymalną strategię HIT/STAND jako macierze
     oddzielnie dla hard totals (usable_ace=0) i soft totals (usable_ace=1).
@@ -110,6 +135,10 @@ def plot_optimal_policy(optimal_hard, optimal_soft, title="Optimal Policy"):
     cbar.set_label("Decision (0 = STAND, 1 = HIT)")
 
     plt.suptitle(title, fontsize=16)
+
+    if save_plot is not None:
+        save_plot(save_path)
+
     plt.show()
 
 def _annotate_cells(ax, data, xvals, yvals, mask=None, hit_char='H', stand_char='S'):
@@ -122,7 +151,7 @@ def _annotate_cells(ax, data, xvals, yvals, mask=None, hit_char='H', stand_char=
             txt = hit_char if v == 1 else stand_char
             ax.text(x, y, txt, ha='center', va='center', fontsize=10, color='black')
 
-def plot_optimal_policy_annotated(optimal_hard, optimal_soft, title="Optimal Strategy"):
+def plot_optimal_policy_annotated(optimal_hard, optimal_soft, title="Optimal Strategy",save_path=None):
     # Slice to valid blackjack ranges
     hard = optimal_hard[4:22, 1:11]
     soft = optimal_soft[4:22, 1:11]
@@ -179,8 +208,10 @@ def plot_optimal_policy_annotated(optimal_hard, optimal_soft, title="Optimal Str
         loc='lower center', ncol=3, frameon=False)
 
     plt.suptitle(title, fontsize=16)
+    if save_plot is not None:
+        save_plot(save_path)
     plt.show()
-def plot_learned_policy_annotated(ai, title="Learned Strategy"):
+def plot_learned_policy_annotated(ai, title="Learned Strategy",save_path=None):
     Q = ai.Q
     try:
         import cupy as cp
@@ -248,6 +279,8 @@ def plot_learned_policy_annotated(ai, title="Learned Strategy"):
         loc='lower center', ncol=3, frameon=False    )
 
     plt.suptitle(title, fontsize=16)
+    if save_plot is not None:
+        save_plot(save_path)
     plt.show()
 def true_table_optimal_action(player_sum, dealer_card, usable_ace):
     # Terminal or invalid
@@ -312,7 +345,7 @@ def compare_policy_to_optimal(ai, optimal_hard, optimal_soft):
                 agreement_soft[player, dealer] = 1 if model_action == optimal_soft[player][dealer] else -1
 
     return agreement_hard, agreement_soft
-def plot_convergence(agreement, title):
+def plot_convergence(agreement, title,save_path=None):
     import matplotlib.pyplot as plt
     # Slice to valid blackjack ranges: player 4..21, dealer 1..10
     data = agreement[4:22, 1:11]
@@ -334,45 +367,10 @@ def plot_convergence(agreement, title):
     plt.yticks(range(4, 22))
 
     plt.title(title)
+    if save_plot is not None:
+        save_plot(save_path)
     plt.show()
-# def plot_convergence_dual(agreement_hard, agreement_soft, title="Policy Convergence"):
-#     import matplotlib.pyplot as plt
-#     # Slice to valid blackjack ranges
-#     hard = agreement_hard[4:22, 1:11]
-#     soft = agreement_soft[4:22, 1:11]
-#
-#     fig, axes = plt.subplots(1, 2, figsize=(12, 6), constrained_layout=True)
-#
-#     im0 = axes[0].imshow(
-#         hard,
-#         cmap="RdBu",
-#         vmin=-1, vmax=1,
-#         origin="lower",
-#         extent=[1, 10, 4, 21]
-#     )
-#     axes[0].set_title("Hard totals (usable ace = 0)")
-#     axes[0].set_xlabel("Dealer showing (1–10)")
-#     axes[0].set_ylabel("Player sum (4–21)")
-#     axes[0].set_xticks(range(1, 11))
-#     axes[0].set_yticks(range(4, 22))
-#
-#     im1 = axes[1].imshow(
-#         soft,
-#         cmap="RdBu",
-#         vmin=-1, vmax=1,
-#         origin="lower",
-#         extent=[1, 10, 4, 21]
-#     )
-#     axes[1].set_title("Soft totals (usable ace = 1)")
-#     axes[1].set_xlabel("Dealer showing (1–10)")
-#     axes[1].set_ylabel("Player sum (4–21)")
-#     axes[1].set_xticks(range(1, 11))
-#     axes[1].set_yticks(range(4, 22))
-#
-#     cbar = fig.colorbar(im1, ax=axes.ravel().tolist(), shrink=0.85)
-#     cbar.set_label("Agreement (1 = correct, -1 = incorrect)")
-#     plt.suptitle(title, fontsize=16)
-#     plt.show()
+
 def compute_accuracy_vs_optimal(ai, optimal_hard, optimal_soft, verbose=True):
     """
     Porównuje politykę agenta `ai` z optymalnymi tabelami (HIT=1 / STAND=0).
@@ -488,7 +486,7 @@ def make_training_history():
         "policy_hard_snapshots": [],  # list of arrays shape (22,11) or sliced (4:22,1:11)
         "policy_soft_snapshots": [],
     }
-def plot_accuracy_history(history, title="Accuracy over training"):
+def plot_accuracy_history(history, title="Accuracy over training",save_path=None):
     import matplotlib.pyplot as plt
     batches = history["batches"]
     plt.figure(figsize=(10,5))
@@ -503,9 +501,11 @@ def plot_accuracy_history(history, title="Accuracy over training"):
     plt.legend(loc='best', fontsize='small')
     plt.grid(alpha=0.3)
     plt.tight_layout()
+    if save_plot is not None:
+        save_plot(save_path)
     plt.show()
 
-def plot_policy_snapshots(history, n_snapshots=6, usable=0, title_prefix="Policy evolution"):
+def plot_policy_snapshots(history, n_snapshots=6, usable=0, title_prefix="Policy evolution",save_path=None):
     import matplotlib.pyplot as plt
     import numpy as np
     snaps = history["policy_hard_snapshots"] if usable==0 else history["policy_soft_snapshots"]
@@ -524,6 +524,8 @@ def plot_policy_snapshots(history, n_snapshots=6, usable=0, title_prefix="Policy
     fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.6, label="0=STAND,1=HIT")
     plt.suptitle(f"{title_prefix} (usable={usable})")
     plt.tight_layout(rect=[0,0,1,0.95])
+    if save_plot is not None:
+        save_plot(save_path)
     plt.show()
 
 def animate_policy(history, usable=0, interval=500, save_path=None):
@@ -603,7 +605,7 @@ def log_training_step(history, batch_idx, ai, optimal_hard, optimal_soft, snapsh
 
 
 def plot_value_3d_matplotlib(ai, title="State-value v* (Matplotlib 3D)",
-                             y_base=10, view=(30, 120), box_aspect=(1, 1, 0.5)):
+                             y_base=10, view=(30, 120), box_aspect=(1, 1, 0.5),save_path=None):
     """
     Rysuje 3D surface dla player_sum 12..21 i dealer 1..10.
     Domyślnie ustawia 12 bliżej widza (invert_yaxis=True) i y_base=10/11
@@ -667,9 +669,11 @@ def plot_value_3d_matplotlib(ai, title="State-value v* (Matplotlib 3D)",
 
     plt.suptitle(title)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
+    if save_plot is not None:
+        save_plot(save_path)
     plt.show()
 
-def plot_convergence_dual(agreement_hard, agreement_soft, title="Policy Convergence"):
+def plot_convergence_dual(agreement_hard, agreement_soft, title="Policy Convergence",save_path=None):
     hard = agreement_hard[4:22, 1:11]
     soft = agreement_soft[4:22, 1:11]
 
@@ -699,8 +703,10 @@ def plot_convergence_dual(agreement_hard, agreement_soft, title="Policy Converge
     cbar = fig.colorbar(im1, ax=axes.ravel().tolist(), shrink=0.85)
     cbar.set_label("Agreement (1 = correct, -1 = incorrect)")
     plt.suptitle(title, fontsize=16)
+    if save_plot is not None:
+        save_plot(save_path)
     plt.show()
-def plot_dealer_ace_visits(counts, usable=0):
+def plot_dealer_ace_visits(counts, usable=0,save_path=None):
     import matplotlib.pyplot as plt
     # visits dla dealer=Ace (kolumna 1)
     visits = counts[:, 1, usable, :].sum(axis=-1)
@@ -713,6 +719,8 @@ def plot_dealer_ace_visits(counts, usable=0):
     plt.xlabel("Player sum")
     plt.ylabel("Visits")
     plt.grid(True)
+    if save_plot is not None:
+        save_plot(save_path)
     plt.show()
 def print_policy(Q, n=None, title="Policy", print_n=False):
     """

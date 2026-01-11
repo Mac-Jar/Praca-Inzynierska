@@ -1,7 +1,8 @@
 # ai_gpu.py
 import numpy as np
 from numba import cuda, float32, int32
-from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32
+from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32,xoroshiro128p_uniform_float64
+from numba.types import float64, int64
 import math
 import time
 from utils import *
@@ -57,7 +58,7 @@ def evaluate_hand_gpu(cards_vals, n):
 @cuda.jit(device=True, inline=True)
 def draw_card(rng_states, tid):
     # use xoroshiro uniform generator helper
-    return int(xoroshiro128p_uniform_float32(rng_states, tid) * 13) + 2  # gives 2..14, we'll map >=11 appropriately
+    return int(xoroshiro128p_uniform_float64(rng_states, tid) * 13) + 2  # gives 2..14, we'll map >=11 appropriately
 
 @cuda.jit(device=True, inline=True)
 def map_card_value(v):
@@ -72,8 +73,8 @@ def map_card_value(v):
 def play_episodes_kernel(dev_Q, epsilon, rng_states,
                          dev_sum_rewards, dev_counts, episodes_per_thread):
     # --- Shared memory: 1D tablice ---
-    block_sum = cuda.shared.array( shape=TOTAL_STATES, dtype=float32 )
-    block_count = cuda.shared.array( shape=TOTAL_STATES, dtype=int32 )
+    block_sum = cuda.shared.array( shape=TOTAL_STATES, dtype=float64 )
+    block_count = cuda.shared.array( shape=TOTAL_STATES, dtype=int64 )
     gid = cuda.grid(1)  # globalny indeks wątku
     # --- Zerowanie shared memory ---
     tid = cuda.threadIdx.x # lokalny indeks w bloku (do shared)
@@ -89,14 +90,14 @@ def play_episodes_kernel(dev_Q, epsilon, rng_states,
     if active:
 
     # local buffers
-        visited_states = cuda.local.array(shape=(60,), dtype=np.int32)  # triplets, max steps ~20 -> 60 ints
-        visited_actions = cuda.local.array(shape=(20,), dtype=np.int32)
+        visited_states = cuda.local.array(shape=(60,), dtype=np.int64)  # triplets, max steps ~20 -> 60 ints
+        visited_actions = cuda.local.array(shape=(20,), dtype=np.int64)
 
         for ep in range(episodes_per_thread):
             # init small local "deckless" game using RNG
             # draw initial cards
-            pcards = cuda.local.array(12, dtype=np.int32)
-            dcards = cuda.local.array(12, dtype=np.int32)
+            pcards = cuda.local.array(12, dtype=np.int64)
+            dcards = cuda.local.array(12, dtype=np.int64)
             p_n = 0
             d_n = 0
 
@@ -137,13 +138,13 @@ def play_episodes_kernel(dev_Q, epsilon, rng_states,
                 #             break
 
                 # epsilon-greedy using dev_Q
-                r = xoroshiro128p_uniform_float32(rng_states, gid)
+                r = xoroshiro128p_uniform_float64(rng_states, gid)
 
                 if p_sum >= 21:
                     a = 0  # STAND at 21+
 
                 elif r < epsilon:
-                    a = 1 if xoroshiro128p_uniform_float32(rng_states, gid) < 0.5 else 0
+                    a = 1 if xoroshiro128p_uniform_float64(rng_states, gid) < 0.5 else 0
 
                 else:
                     q0 = dev_Q[ps_idx, dealer_up, usable, 0]  # STAND
@@ -153,7 +154,7 @@ def play_episodes_kernel(dev_Q, epsilon, rng_states,
                     elif q1 > q0:
                         a = 1
                     else:
-                        a = 1 if xoroshiro128p_uniform_float32(rng_states, gid) < 0.5 else 0  # unbiased tie-break
+                        a = 1 if xoroshiro128p_uniform_float64(rng_states, gid) < 0.5 else 0  # unbiased tie-break
 
                 # store
                 if step < 20:
@@ -240,9 +241,9 @@ class AI_Blackjack_GPU:
     def __init__(self, epsilon=0.1, device_threads=256, seed=1234):
         self.epsilon = epsilon
         self.shape = (PS_MAX, DC_MAX, UA_MAX, ACTIONS)
-        self.sum_rewards = np.zeros(self.shape, dtype=np.float32)
-        self.counts = np.zeros(self.shape, dtype=np.int32)
-        self.Q = np.zeros(self.shape, dtype=np.float32)
+        self.sum_rewards = np.zeros(self.shape, dtype=np.float64)
+        self.counts = np.zeros(self.shape, dtype=np.int64)
+        self.Q = np.zeros(self.shape, dtype=np.float64)
         #self.Q[:,:,:,1]=2
         # device arrays
         self.d_sum_rewards = cuda.to_device(self.sum_rewards)
@@ -266,7 +267,6 @@ class AI_Blackjack_GPU:
         target_episodes_per_thread: ile epizodów średnio przypada na wątek
         """
         batch_size = min(10**9,episodes // 100)
-
         threads_per_block = 256
         remaining = episodes
 
@@ -303,11 +303,11 @@ class AI_Blackjack_GPU:
             # --- uruchomienie kernela epsilon-greedy ---
             play_episodes_kernel[blocks, threads_per_block](
                 self.d_Q,
-                np.float32(self.epsilon),
+                np.float64(self.epsilon),
                 self.rng_states,
                 self.d_sum_rewards,
                 self.d_counts,
-                np.int32(ep_per_thread)
+                np.int64(ep_per_thread)
             )
             cuda.synchronize()
 
@@ -321,11 +321,11 @@ class AI_Blackjack_GPU:
             self.counts[mask] += counts[mask]
 
             mask2 = self.counts > 0
-            self.Q[mask2] = (self.sum_rewards[mask2] / self.counts[mask2]).astype(np.float32)
+            self.Q[mask2] = (self.sum_rewards[mask2] / self.counts[mask2]).astype(np.float64)
 
             remaining -= cur_batch
             batch_counter += 1
-            print(f"[GPU] Completed batch of {cur_batch} episodes. Remaining: {remaining}")
+            print(f"[GPU Epsilon Greedy] Completed batch of {cur_batch} episodes. Remaining: {remaining}")
 
             # logowanie co `log_every` batchy
             if batch_counter % log_every == 0:
