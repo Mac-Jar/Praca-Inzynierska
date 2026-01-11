@@ -265,7 +265,8 @@ class AI_Blackjack_GPU:
         episodes: total episodes to run
         target_episodes_per_thread: ile epizodów średnio przypada na wątek
         """
-        batch_size = episodes // 100
+        batch_size = min(10**9,episodes // 100)
+
         threads_per_block = 256
         remaining = episodes
 

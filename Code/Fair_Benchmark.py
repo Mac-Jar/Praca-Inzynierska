@@ -2,11 +2,10 @@ from AI_Blackjack_CPU_EpsilonGreedy import *
 from AI_Blackjack_CPU_ES import *
 from AI_Blackjack_CUDA_EpsilonGreedy import *
 from AI_Blackjack_CUDA_ES import *
-
+from Game_Simulations import *
 from utils import *
 
 EPISODES = 10**10
-BATCH_SIZE = 100000
 optimal_hard, optimal_soft = generate_optimal_tables()
 plot_optimal_policy_annotated(optimal_hard, optimal_soft, title="Optimal Strategy")
 
@@ -95,6 +94,5 @@ if __name__ == "__main__":
     ai_gpu = benchmark_and_show_policy(AI_Blackjack_GPU, "GPU (Numba CUDA)")
     ai_gpu_es = benchmark_and_show_policy_es(AI_Blackjack_GPU_ES, "GPU ES (Numba CUDA)")
 
-    # GPU CuPy
-    #ai_cupy = benchmark_and_show_policy(AI_Blackjack_CuPy, "GPU (CuPy)")
-
+    run_simulation(ai_gpu, "GPU MC-EpsilonGreedy",n=10**6)
+    run_simulation(ai_gpu_es, "GPU MC-ES",n=10**6)

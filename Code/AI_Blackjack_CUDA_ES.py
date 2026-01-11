@@ -294,7 +294,7 @@ class AI_Blackjack_GPU_ES:
 
 
     def train(self, episodes=200_000, target_episodes_per_thread=32):
-        batch_size = episodes // 10
+        batch_size = min(10**9,episodes // 100)
         threads_per_block = 256
         remaining = episodes
 
