@@ -16,7 +16,8 @@ def benchmark_and_show_policy(ai_class, algorithm_name="CPU EpsilonGreedy"):
 
     history=ai.train(episodes=EPISODES)
     end = time.time()
-    print(f"{algorithm_name} training time: {end - start:.2f} s\n")
+    duration=end - start
+    print(f"{algorithm_name} training time: {duration:.2f} s\n")
 
     ai.evaluate_policy(print_n=True)
 
@@ -76,9 +77,9 @@ def benchmark_and_show_policy(ai_class, algorithm_name="CPU EpsilonGreedy"):
         save_path=auto_save_plot(algorithm_name, "value_surface")
     )
 
-    print(f"{algorithm_name} training time: {end - start:.2f} s\n")
+    print(f"{algorithm_name} training time: {duration} s\n")
 
-    return ai
+    return ai,duration
 def benchmark_and_show_policy_es(ai_class, algorithm_name="CPU ES"):
     print(f"=== Benchmark {algorithm_name} ===")
     ai = ai_class()
@@ -86,7 +87,8 @@ def benchmark_and_show_policy_es(ai_class, algorithm_name="CPU ES"):
 
     history = ai.train(episodes=EPISODES)
     end = time.time()
-    print(f"{algorithm_name} training time: {end - start:.2f} s\n")
+    duration=end-start
+    print(f"{algorithm_name} training time: {duration} s\n")
 
     ai.evaluate_policy(print_n=True)
 
@@ -145,16 +147,20 @@ def benchmark_and_show_policy_es(ai_class, algorithm_name="CPU ES"):
         save_path=auto_save_plot(algorithm_name, "value_surface")
     )
 
-    print(f"{algorithm_name} training time: {end - start:.2f} s\n")
-    return ai
+    print(f"{algorithm_name} training time: {duration} s\n")
+    return ai,duration
 if __name__ == "__main__":
     # CPU
     #ai_cpu = benchmark_and_show_policy(AI_Blackjack_CPU, "CPU")
     #ai_cpu_es = benchmark_and_show_policy_es(AI_Blackjack_CPU_ES, "CPU ES")
 
     # GPU Numba
-    ai_gpu = benchmark_and_show_policy(AI_Blackjack_GPU, "GPU EpsilonGreedy")
-    ai_gpu_es = benchmark_and_show_policy_es(AI_Blackjack_GPU_ES, "GPU ES")
+    ai_gpu,duration_epsilon = benchmark_and_show_policy(AI_Blackjack_GPU, "GPU EpsilonGreedy")
+    ai_gpu_es,duration_ES = benchmark_and_show_policy_es(AI_Blackjack_GPU_ES, "GPU ES")
+
+    print(f"Epsilon Greedy training time: {duration_epsilon} s\n")
+    print(f"Ezploring Starts training time: {duration_ES} s\n")
+
     number_of_games_to_simulate = 5*10**5
     run_simulation(ai_gpu, "GPU MC-EpsilonGreedy",n=number_of_games_to_simulate)
     run_simulation(ai_gpu_es, "GPU MC-ES",n=number_of_games_to_simulate)
