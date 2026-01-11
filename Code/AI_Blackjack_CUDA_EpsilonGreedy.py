@@ -260,7 +260,7 @@ class AI_Blackjack_GPU:
         if self.rng_states is None or self.rng_states.size != n_threads:
             self.rng_states = create_xoroshiro128p_states(n_threads, seed=self.seed)
 
-    def train(self, episodes=200_000, target_episodes_per_thread=32):
+    def train(self, episodes=200_000, target_episodes_per_thread=32,print_progress=True):
         """
         Epsilon-greedy training loop.
         episodes: total episodes to run
@@ -325,7 +325,8 @@ class AI_Blackjack_GPU:
 
             remaining -= cur_batch
             batch_counter += 1
-            print(f"[GPU Epsilon Greedy] Completed batch of {cur_batch} episodes. Remaining: {remaining}")
+            if print_progress:
+                print(f"[GPU Epsilon Greedy] Completed batch of {cur_batch} episodes. Remaining: {remaining}")
 
             # logowanie co `log_every` batchy
             if batch_counter % log_every == 0:

@@ -9,11 +9,12 @@ from datetime import datetime
 # ------------------------------------------------------------
 
 def auto_save_plot(algorithm_name, plot_type):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    #timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp=""
     safe_name = algorithm_name.replace(" ", "_")
     folder = os.path.join("plots", safe_name)
     os.makedirs(folder, exist_ok=True)
-    filename = f"{timestamp}_{plot_type}.png"
+    filename = f"{timestamp}{plot_type}.png"
     return os.path.join(folder, filename)
 
 
@@ -647,6 +648,7 @@ def plot_value_3d_matplotlib(ai, title="State-value v* (Matplotlib 3D)",
 
     plt.suptitle(title)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.canvas.draw()  # <<< KLUCZOWE
     if save_plot is not None:
         save_plot(save_path)
     plt.show()

@@ -294,7 +294,7 @@ class AI_Blackjack_GPU_ES:
             self.rng_states = create_xoroshiro128p_states(n_threads, seed=self.seed)
 
 
-    def train(self, episodes=200_000, target_episodes_per_thread=32):
+    def train(self, episodes=200_000, target_episodes_per_thread=32,print_progress=True):
         batch_size = min(10**9,episodes // 100)
         threads_per_block = 256
         remaining = episodes
@@ -356,7 +356,8 @@ class AI_Blackjack_GPU_ES:
             # po zakończeniu batcha i po aktualizacji self.Q:
             remaining -= cur_batch
             batch_counter += 1
-            print(f"[GPU ES] Completed batch of {cur_batch} episodes. Remaining: {remaining}")
+            if print_progress:
+               print(f"[GPU ES] Completed batch of {cur_batch} episodes. Remaining: {remaining}")
 
             # logowanie co `log_every` batchy
             if batch_counter % log_every == 0:
