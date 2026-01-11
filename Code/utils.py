@@ -57,12 +57,7 @@ def optimal_action(player_sum, dealer_card, usable_ace):
 def plot_learned_policy(ai, title="Learned Policy",save_path=None):
     import matplotlib.pyplot as plt, numpy as np
     Q = ai.Q
-    try:
-        import cupy as cp
-        if isinstance(Q, cp.ndarray):
-            Q = cp.asnumpy(Q)
-    except ImportError:
-        pass
+
 
     policy_hard = np.zeros((22, 11), dtype=int)
     policy_soft = np.zeros((22, 11), dtype=int)
@@ -213,12 +208,7 @@ def plot_optimal_policy_annotated(optimal_hard, optimal_soft, title="Optimal Str
     plt.show()
 def plot_learned_policy_annotated(ai, title="Learned Strategy",save_path=None):
     Q = ai.Q
-    try:
-        import cupy as cp
-        if isinstance(Q, cp.ndarray):
-            Q = cp.asnumpy(Q)
-    except ImportError:
-        pass
+
 
     # Build decision matrices: 0=STAND, 1=HIT
     policy_hard = np.zeros((22, 11), dtype=int)
@@ -586,12 +576,6 @@ def log_training_step(history, batch_idx, ai, optimal_hard, optimal_soft, snapsh
     if snapshot_policy:
         # snapshot polityki (0..1) dla player 4..21, dealer 1..10
         Q = ai.Q
-        try:
-            import cupy as cp
-            if isinstance(Q, cp.ndarray):
-                Q = cp.asnumpy(Q)
-        except ImportError:
-            pass
         policy_hard = np.argmax(Q[:, :, 0, :], axis=-1)  # shape (PS_MAX, DC_MAX)
         policy_soft = np.argmax(Q[:, :, 1, :], axis=-1)
         # przechowujemy tylko zakres 4:22,1:11 żeby oszczędzić miejsce
@@ -616,12 +600,6 @@ def plot_value_3d_matplotlib(ai, title="State-value v* (Matplotlib 3D)",
     from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
     Q = ai.Q
-    try:
-        import cupy as cp
-        if isinstance(Q, cp.ndarray):
-            Q = cp.asnumpy(Q)
-    except ImportError:
-        pass
 
     # dane: player 12..21, dealer 1..10
     ps_idx = np.arange(12, 22)   # player 12..21
@@ -728,15 +706,7 @@ def print_policy(Q, n=None, title="Policy", print_n=False):
     n: opcjonalnie liczby odwiedzin w tym samym kształcie
     print_n: czy wypisywać liczbę odwiedzin
     """
-    try:
-        import cupy as cp
-        is_cupy = isinstance(Q, cp.ndarray)
-        if is_cupy:
-            Q = cp.asnumpy(Q)
-        if n is not None and is_cupy:
-            n = cp.asnumpy(n)
-    except ImportError:
-        pass  # tylko numpy
+
 
     print(f"\n=== {title} ===")
     for usable in [1, 0]:
