@@ -5,7 +5,7 @@ from AI_Blackjack_CUDA_ES import *
 from Game_Simulations import *
 from utils import *
 
-EPISODES = 10**6
+EPISODES = 10**10
 optimal_hard, optimal_soft = generate_optimal_tables()
 plot_optimal_policy_annotated(optimal_hard, optimal_soft, title="Optimal Strategy")
 
@@ -38,7 +38,7 @@ def benchmark_and_show_policy(ai_class, algorithm_name="CPU EpsilonGreedy",make_
     if make_plots:
         plot_accuracy_history(
             history,
-            title="GPU Eosilon — Accuracy over training",
+            title=f"{algorithm_name} — Accuracy over training",
             save_path=auto_save_plot(algorithm_name, "accuracy")
         )
 
@@ -46,7 +46,7 @@ def benchmark_and_show_policy(ai_class, algorithm_name="CPU EpsilonGreedy",make_
             history,
             n_snapshots=6,
             usable=0,
-            title_prefix="GPU ES policy (hard)",
+            title_prefix=f"{algorithm_name} (hard)",
             save_path=auto_save_plot(algorithm_name, "policy_hard")
         )
 
@@ -54,7 +54,7 @@ def benchmark_and_show_policy(ai_class, algorithm_name="CPU EpsilonGreedy",make_
             history,
             n_snapshots=6,
             usable=1,
-            title_prefix="GPU Eosilon policy (soft)",
+            title_prefix=f"{algorithm_name} policy (soft)",
             save_path=auto_save_plot(algorithm_name, "policy_soft")
         )
 
@@ -108,7 +108,7 @@ def benchmark_and_show_policy_es(ai_class, algorithm_name="CPU ES"):
     # wykresy:
     plot_accuracy_history(
         history,
-        title="GPU Eosilon — Accuracy over training",
+        title=f"{algorithm_name} — Accuracy over training",
         save_path=auto_save_plot(algorithm_name, "accuracy")
     )
 
@@ -116,7 +116,7 @@ def benchmark_and_show_policy_es(ai_class, algorithm_name="CPU ES"):
         history,
         n_snapshots=6,
         usable=0,
-        title_prefix="GPU ES policy (hard)",
+        title_prefix=f"{algorithm_name} policy (hard)",
         save_path=auto_save_plot(algorithm_name, "policy_hard")
     )
 
@@ -124,7 +124,7 @@ def benchmark_and_show_policy_es(ai_class, algorithm_name="CPU ES"):
         history,
         n_snapshots=6,
         usable=1,
-        title_prefix="GPU Eosilon policy (soft)",
+        title_prefix=f"{algorithm_name} policy (soft)",
         save_path=auto_save_plot(algorithm_name, "policy_soft")
     )
 
@@ -149,15 +149,18 @@ def benchmark_and_show_policy_es(ai_class, algorithm_name="CPU ES"):
 
     print(f"{algorithm_name} training time: {duration} s\n")
     return ai,duration
-if __name__ == "__main__":
-    # CPU
 
+
+if __name__ == "__main__":
+
+    # CPU
     # ai_cpu,duration_cpu = benchmark_and_show_policy(AI_Blackjack_CPU, "CPU")
     # ai_cpu_es,duration_cpu_ES = benchmark_and_show_policy_es(AI_Blackjack_CPU_ES, "CPU ES")
-    #
-    # # GPU Numba
-    # ai_gpu,duration_epsilon = benchmark_and_show_policy(AI_Blackjack_GPU, "GPU EpsilonGreedy")
-    # ai_gpu_es,duration_ES = benchmark_and_show_policy_es(AI_Blackjack_GPU_ES, "GPU ES")
+
+    # GPU Numba
+    ai_gpu, duration_epsilon = benchmark_and_show_policy(AI_Blackjack_GPU, "GPU EpsilonGreedy")
+    ai_gpu_es, duration_ES = benchmark_and_show_policy_es(AI_Blackjack_GPU_ES, "GPU ES")
+
     # print(f"Epsilon Greedy CPU training time: {duration_cpu} s\n")
     # print(f"Exploring Starts CPU training time: {duration_cpu_ES} s\n")
     # print(f"Epsilon Greedy GPU training time: {duration_epsilon} s\n")
@@ -167,22 +170,38 @@ if __name__ == "__main__":
     # run_simulation(ai_gpu, "GPU MC-EpsilonGreedy",n=number_of_games_to_simulate)
     # run_simulation(ai_gpu_es, "GPU MC-ES",n=number_of_games_to_simulate)
     # run_simulation_for2strategies(ai_gpu,ai_gpu_es,"GPU MC-EpsilonGreedy","GPU MC-ES",number_of_games_to_simulate)
-    times_CPU=[]
-    times_GPU=[]
-    number_of_episodes=[]
-    for i in range(4, 9):
-        EPISODES = 10 ** i
-        print(f"=== Benchmark {i} ===")
-        print(f"=== EPISODES : {EPISODES} ===")
-        ai_cpu, duration_cpu = benchmark_and_show_policy(AI_Blackjack_CPU, "CPU",False)
-        ai_gpu, duration_epsilon = benchmark_and_show_policy(AI_Blackjack_GPU, "GPU EpsilonGreedy",False)
-        print(f"Epsilon Greedy CPU training time: {duration_cpu} s\n")
-        print(f"Epsilon Greedy GPU training time: {duration_epsilon} s\n")
-        times_CPU.append(duration_cpu)
-        times_GPU.append(duration_epsilon)
-        number_of_episodes.append(EPISODES)
+    # times_CPU=[]
+    # times_GPU=[]
+    # number_of_episodes=[]
+    # for i in range(4, 9):
+    #     EPISODES = 10 ** i
+    #     print(f"=== Benchmark {i-3} ===")
+    #     print(f"=== EPISODES : {EPISODES} ===")
+    #     ai_cpu, duration_cpu = benchmark_and_show_policy(AI_Blackjack_CPU, "CPU",False)
+    #     ai_gpu, duration_epsilon = benchmark_and_show_policy(AI_Blackjack_GPU, "GPU EpsilonGreedy",False)
+    #     print(f"Epsilon Greedy CPU training time: {duration_cpu} s\n")
+    #     print(f"Epsilon Greedy GPU training time: {duration_epsilon} s\n")
+    #     times_CPU.append(duration_cpu)
+    #     times_GPU.append(duration_epsilon)
+    #     number_of_episodes.append(EPISODES)
 
-    for i in range(len(number_of_episodes)):
-        print(f"=== Episodes {number_of_episodes[i]} ===")
-        print(f"Epsilon Greedy CPU training time: {times_CPU[i]} s")
-        print(f"Epsilon Greedy GPU training time: {times_GPU[i]} s\n")
+    # for i in range(len(number_of_episodes)):
+    #     print(f"=== Episodes {number_of_episodes[i]} ===")
+    #     print(f"Epsilon Greedy CPU training time: {times_CPU[i]} s")
+    #     print(f"Epsilon Greedy GPU training time: {times_GPU[i]} s\n")
+
+    # times_GPU=[]
+    # number_of_episodes=[]
+    # for i in range(9, 13):
+    #     EPISODES = 10 ** i
+    #     print(f"=== Benchmark {i - 8} ===")
+    #     print(f"=== EPISODES : {EPISODES} ===")
+    #     ai_gpu, duration_epsilon = benchmark_and_show_policy(AI_Blackjack_GPU, "GPU EpsilonGreedy", False)
+    #     print(f"Epsilon Greedy GPU training time: {duration_epsilon} s\n")
+    #     times_GPU.append(duration_epsilon)
+    #     number_of_episodes.append(EPISODES)
+    #
+    # for i in range(len(number_of_episodes)):
+    #     print(f"=== Episodes {number_of_episodes[i]} ===")
+    #
+    #     print(f"Epsilon Greedy GPU training time: {times_GPU[i]} s\n")

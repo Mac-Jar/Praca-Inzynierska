@@ -4,6 +4,21 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import os
 from datetime import datetime
+
+import matplotlib as mpl
+
+mpl.rcParams.update({
+    "figure.figsize": (14, 8),      # DOMYŚLNY rozmiar wszystkich wykresów
+    "figure.dpi": 120,
+    "savefig.dpi": 200,
+    "font.size": 13,
+    "axes.titlesize": 15,
+    "axes.labelsize": 13,
+    "xtick.labelsize": 11,
+    "ytick.labelsize": 11,
+    "legend.fontsize": 11,
+})
+
 # ------------------------------------------------------------
 #  OPTIMAL POLICY for Blackjack (HIT=1 / STAND=0)
 # ------------------------------------------------------------
@@ -496,28 +511,73 @@ def plot_accuracy_history(history, title="Accuracy over training",save_path=None
         save_plot(save_path)
     plt.show()
 
-def plot_policy_snapshots(history, n_snapshots=6, usable=0, title_prefix="Policy evolution",save_path=None):
+def plot_policy_snapshots(history, n_snapshots=6, usable=0,
+                          title_prefix="Policy evolution", save_path=None):
     import matplotlib.pyplot as plt
     import numpy as np
-    snaps = history["policy_hard_snapshots"] if usable==0 else history["policy_soft_snapshots"]
+    import math
+
+    snaps = history["policy_hard_snapshots"] if usable == 0 else history["policy_soft_snapshots"]
     total = len(snaps)
     if total == 0:
         print("No snapshots recorded.")
         return
-    idxs = np.linspace(0, total-1, min(n_snapshots, total), dtype=int)
-    fig, axes = plt.subplots(1, len(idxs), figsize=(3*len(idxs), 4))
-    for ax, i in zip(axes, idxs):
+
+    # wybrane indeksy snapshotów
+    idxs = np.linspace(0, total - 1, min(n_snapshots, total), dtype=int)
+
+    # ---- SIATKA 2 RZĘDY ----
+    n_plots = len(idxs)
+    n_rows = 2
+    n_cols = math.ceil(n_plots / n_rows)
+
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=(4 * n_cols, 4 * n_rows),
+        constrained_layout=True
+    )
+
+    axes = np.atleast_2d(axes)  # gwarancja indeksowania [r, c]
+
+    im = None
+    for k, i in enumerate(idxs):
+        r = k // n_cols
+        c = k % n_cols
+        ax = axes[r, c]
+
         data = snaps[i]
-        im = ax.imshow(data, origin='lower', cmap='coolwarm', vmin=0, vmax=1, extent=[1,10,12,21], aspect='auto')
+        im = ax.imshow(
+            data,
+            origin='lower',
+            cmap='coolwarm',
+            vmin=0, vmax=1,
+            extent=[1, 10, 12, 21],
+            aspect='auto'
+        )
         ax.set_title(f"batch {history['batches'][i]}")
         ax.set_xlabel("Dealer")
         ax.set_ylabel("Player sum")
-    fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.6, label="0=STAND,1=HIT")
-    plt.suptitle(f"{title_prefix} (usable={usable})")
-    plt.tight_layout(rect=[0,0,1,0.95])
+
+    # wyłącz puste osie (jeśli liczba wykresów nieparzysta)
+    for k in range(n_plots, n_rows * n_cols):
+        r = k // n_cols
+        c = k % n_cols
+        axes[r, c].axis("off")
+
+    # wspólny colorbar
+    fig.colorbar(
+        im,
+        ax=axes.ravel().tolist(),
+        shrink=0.8,
+        label="0 = STAND, 1 = HIT"
+    )
+
+    plt.suptitle(f"{title_prefix} (usable={usable})", fontsize=16)
+
     if save_plot is not None:
         save_plot(save_path)
     plt.show()
+
 
 def animate_policy(history, usable=0, interval=500, save_path=None):
     """
